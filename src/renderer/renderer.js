@@ -10,6 +10,7 @@ const cuerpoTramites = document.querySelector('#tabla-tramites tbody');
 const cuerpoLogs = document.querySelector('#tabla-logs tbody');
 const cuerpoHistorico = document.querySelector('#tabla-historico tbody');
 const cuerpoPos = document.querySelector('#tabla-pos tbody');
+const cuerpoEstadisticas = document.querySelector('#tabla-estadisticas tbody');
 const contadorTramites = document.getElementById('contador-tramites');
 const contadorHistorico = document.getElementById('contador-historico');
 const contadorPos = document.getElementById('contador-pos');
@@ -19,6 +20,7 @@ const buscadorPos = document.getElementById('buscador-pos');
 const chips = document.getElementById('chips');
 const chipsAnio = document.getElementById('chips-anio');
 const chipsCategoria = document.getElementById('chips-categoria');
+const chipsAnioEstadisticas = document.getElementById('chips-anio-estadisticas');
 
 const ESTADOS = [
   ['por_estudiar', 'Por estudiar'],
@@ -85,6 +87,111 @@ function celda(contenido, clase) {
   if (contenido instanceof HTMLElement) td.appendChild(contenido);
   else td.textContent = contenido ?? '—';
   return td;
+}
+
+/**
+ * Ordenamiento por columna (clic en el encabezado). Cada ejecutor tiene su
+ * propia lógica de trabajo (uno por fecha de realización, otro por
+ * radicado), así que esto NO se guarda en la base de datos compartida:
+ * queda solo en este PC (localStorage), uno por tabla. El orden "de
+ * fábrica" de cada vista (el que ya existía) sigue siendo el default: un
+ * tercer clic sobre la misma columna lo quita y vuelve a ese default.
+ */
+const ORDEN_STORAGE_PREFIX = 'gestor-orden-';
+
+function cargarOrden(tabla) {
+  try {
+    const guardado = localStorage.getItem(ORDEN_STORAGE_PREFIX + tabla);
+    return guardado ? JSON.parse(guardado) : null;
+  } catch {
+    return null;
+  }
+}
+
+const ordenActivo = {
+  tramites: cargarOrden('tramites'),
+  historico: cargarOrden('historico'),
+  pos: cargarOrden('pos'),
+};
+
+// Accesores de valor por columna: casi todas son campos directos de la
+// fila, pero algunas (sector/días en Bandeja) son calculadas.
+const VALOR_COLUMNA = {
+  tramites: {
+    numero_tramite: (t) => t.numero_tramite || '',
+    tipo: (t) => t.tipo || '',
+    sector: (t) => sectorDe(t),
+    dias: (t) => diasDe(t),
+    mi_estado: (t) => t.mi_estado || '',
+    prioridad: (t) => t.prioridad || '',
+    observacion: (t) => t.observacion || '',
+    presente_en_bandeja: (t) => (t.presente_en_bandeja ? 1 : 0),
+  },
+  historico: {
+    numero_tramite: (t) => t.numero_tramite || '',
+    tipo: (t) => t.tipo || '',
+    fmi: (t) => t.fmi || '',
+    fecha_realizacion: (t) => t.fecha_realizacion || '',
+    fecha_envio: (t) => t.fecha_envio || '',
+    estado_seguimiento: (t) => t.estado_seguimiento || '',
+    observacion: (t) => t.observacion || '',
+    analisis: (t) => t.analisis || '',
+  },
+  pos: {
+    categoria: (s) => s.categoria || '',
+    radicado: (s) => s.radicado || '',
+    detalle: (s) => s.detalle || '',
+  },
+};
+
+function compararValores(va, vb) {
+  if (typeof va === 'number' && typeof vb === 'number') {
+    if (va === null || Number.isNaN(va)) return 1;
+    if (vb === null || Number.isNaN(vb)) return -1;
+    return va - vb;
+  }
+  return String(va ?? '').localeCompare(String(vb ?? ''), 'es', { numeric: true, sensitivity: 'base' });
+}
+
+/** Aplica el orden por columna elegido por el usuario, o el default de la vista si no eligió ninguno. */
+function aplicarOrden(lista, tabla, comparadorDefault) {
+  const orden = ordenActivo[tabla];
+  if (!orden) return comparadorDefault ? [...lista].sort(comparadorDefault) : lista;
+  const obtener = VALOR_COLUMNA[tabla][orden.col];
+  const signo = orden.dir === 'desc' ? -1 : 1;
+  return [...lista].sort((a, b) => signo * compararValores(obtener(a), obtener(b)));
+}
+
+function pintarFlechasOrden(tablaId, tabla) {
+  const orden = ordenActivo[tabla];
+  document.querySelectorAll(`#${tablaId} thead th[data-col]`).forEach((th) => {
+    th.classList.remove('orden-asc', 'orden-desc');
+    if (orden && th.dataset.col === orden.col) {
+      th.classList.add(orden.dir === 'desc' ? 'orden-desc' : 'orden-asc');
+    }
+  });
+}
+
+/** Engancha el clic en los encabezados ordenables de una tabla. */
+function activarOrdenable(tablaId, tabla, repintar) {
+  document.querySelectorAll(`#${tablaId} thead th[data-col]`).forEach((th) => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      const actual = ordenActivo[tabla];
+      let nuevo;
+      if (actual && actual.col === col) {
+        nuevo = actual.dir === 'asc' ? { col, dir: 'desc' } : null;
+      } else {
+        nuevo = { col, dir: 'asc' };
+      }
+      ordenActivo[tabla] = nuevo;
+      if (nuevo) localStorage.setItem(ORDEN_STORAGE_PREFIX + tabla, JSON.stringify(nuevo));
+      else localStorage.removeItem(ORDEN_STORAGE_PREFIX + tabla);
+      pintarFlechasOrden(tablaId, tabla);
+      repintar();
+    });
+  });
+  pintarFlechasOrden(tablaId, tabla);
 }
 
 /**
@@ -191,7 +298,8 @@ function filaBandeja(t) {
 }
 
 function pintarTramites() {
-  const visibles = tramites.filter((t) => pasaFiltro(t) && pasaBusqueda(t, textoBusqueda));
+  const filtrados = tramites.filter((t) => pasaFiltro(t) && pasaBusqueda(t, textoBusqueda));
+  const visibles = aplicarOrden(filtrados, 'tramites', null);
   contadorTramites.textContent = String(visibles.length);
   cuerpoTramites.replaceChildren(...visibles.slice(0, 800).map(filaBandeja));
 }
@@ -244,24 +352,25 @@ function pasaHistorico(t) {
  * fecha de realización. En cuanto un trámite en espera se envía, sube
  * automáticamente al bloque ordenado por fecha de envío.
  */
+function ordenHistoricoDefault(a, b) {
+  const aEnviado = Boolean(a.fecha_envio);
+  const bEnviado = Boolean(b.fecha_envio);
+  if (aEnviado !== bEnviado) return aEnviado ? -1 : 1;
+  if (aEnviado) {
+    const fe = a.fecha_envio.localeCompare(b.fecha_envio);
+    if (fe !== 0) return fe;
+    return (a.fecha_realizacion || '').localeCompare(b.fecha_realizacion || '');
+  }
+  return (a.fecha_realizacion || '').localeCompare(b.fecha_realizacion || '');
+}
+
 function pintarHistorico() {
-  const visibles = tramites
-    .filter((t) => {
-      if (!pasaHistorico(t)) return false;
-      if (anioActivo !== 'todos' && anioDe(t) !== anioActivo) return false;
-      return pasaBusqueda(t, textoHistorico);
-    })
-    .sort((a, b) => {
-      const aEnviado = Boolean(a.fecha_envio);
-      const bEnviado = Boolean(b.fecha_envio);
-      if (aEnviado !== bEnviado) return aEnviado ? -1 : 1;
-      if (aEnviado) {
-        const fe = a.fecha_envio.localeCompare(b.fecha_envio);
-        if (fe !== 0) return fe;
-        return (a.fecha_realizacion || '').localeCompare(b.fecha_realizacion || '');
-      }
-      return (a.fecha_realizacion || '').localeCompare(b.fecha_realizacion || '');
-    });
+  const filtrados = tramites.filter((t) => {
+    if (!pasaHistorico(t)) return false;
+    if (anioActivo !== 'todos' && anioDe(t) !== anioActivo) return false;
+    return pasaBusqueda(t, textoHistorico);
+  });
+  const visibles = aplicarOrden(filtrados, 'historico', ordenHistoricoDefault);
   contadorHistorico.textContent = String(visibles.length);
 
   cuerpoHistorico.replaceChildren(
@@ -310,16 +419,81 @@ function pintarChipsCategoria() {
 }
 
 function pintarPos() {
-  const visibles = seguimientos.filter((s) => {
+  const filtrados = seguimientos.filter((s) => {
     if (categoriaActiva !== 'todas' && s.categoria !== categoriaActiva) return false;
     if (textoPos && !String(s.radicado).toLowerCase().includes(textoPos)) return false;
     return true;
   });
+  const visibles = aplicarOrden(filtrados, 'pos', null);
   contadorPos.textContent = String(visibles.length);
   cuerpoPos.replaceChildren(
     ...visibles.slice(0, 1000).map((s) => {
       const fila = document.createElement('tr');
       fila.append(celda(s.categoria), celda(s.radicado), celda(s.detalle || '—', 'celda-obs'));
+      return fila;
+    })
+  );
+}
+
+/* ------------------------- vista estadísticas ------------------------- */
+
+const MESES = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+];
+let anioEstadisticas = String(new Date().getFullYear());
+
+/**
+ * A diferencia del Histórico (que agrupa por el año del número de
+ * radicado, para separar por hoja de bitácora), las estadísticas agrupan
+ * por la fecha de envío real: es lo que responde "cuántos mandé este
+ * mes", sin importar de qué año sea el radicado.
+ */
+function anioEnvioDe(t) {
+  return t.fecha_envio ? t.fecha_envio.slice(0, 4) : null;
+}
+
+function mesEnvioDe(t) {
+  const n = t.fecha_envio ? parseInt(t.fecha_envio.slice(5, 7), 10) : NaN;
+  return Number.isFinite(n) ? n - 1 : null;
+}
+
+function pintarChipsAnioEstadisticas() {
+  const enviados = tramites.filter((t) => t.fecha_envio);
+  const anios = [...new Set(enviados.map(anioEnvioDe).filter(Boolean))].sort();
+  if (anios.length > 0 && !anios.includes(anioEstadisticas)) {
+    anioEstadisticas = anios[anios.length - 1];
+  }
+  chipsAnioEstadisticas.replaceChildren();
+  const crear = (valor, etiqueta) => {
+    const b = document.createElement('button');
+    b.className = `chip ${anioEstadisticas === valor ? 'activo' : ''}`;
+    b.textContent = etiqueta;
+    b.addEventListener('click', () => { anioEstadisticas = valor; pintarChipsAnioEstadisticas(); pintarEstadisticas(); });
+    chipsAnioEstadisticas.appendChild(b);
+  };
+  anios.forEach((a) => crear(a, a));
+}
+
+function pintarEstadisticas() {
+  const enviados = tramites.filter((t) => t.fecha_envio);
+  const delAnio = enviados.filter((t) => anioEnvioDe(t) === anioEstadisticas);
+
+  document.getElementById('m-enviados-anio').textContent = String(delAnio.length);
+  document.getElementById('m-enviados-total').textContent = String(enviados.length);
+
+  const porMes = new Array(12).fill(0);
+  for (const t of delAnio) {
+    const mes = mesEnvioDe(t);
+    if (mes !== null) porMes[mes] += 1;
+  }
+
+  let acumulado = 0;
+  cuerpoEstadisticas.replaceChildren(
+    ...porMes.map((cantidad, i) => {
+      acumulado += cantidad;
+      const fila = document.createElement('tr');
+      fila.append(celda(MESES[i]), celda(cantidad), celda(acumulado));
       return fila;
     })
   );
@@ -462,6 +636,8 @@ async function cargarTramites() {
   pintarTramites();
   pintarChipsAnio();
   pintarHistorico();
+  pintarChipsAnioEstadisticas();
+  pintarEstadisticas();
 }
 
 async function cargarResumen() {
@@ -516,7 +692,12 @@ document.querySelector('.vistas').addEventListener('click', (e) => {
   document.getElementById('vista-bandeja').classList.toggle('oculto', vista !== 'bandeja');
   document.getElementById('vista-historico').classList.toggle('oculto', vista !== 'historico');
   document.getElementById('vista-seguimientos').classList.toggle('oculto', vista !== 'seguimientos');
+  document.getElementById('vista-estadisticas').classList.toggle('oculto', vista !== 'estadisticas');
 });
+
+activarOrdenable('tabla-tramites', 'tramites', pintarTramites);
+activarOrdenable('tabla-historico', 'historico', pintarHistorico);
+activarOrdenable('tabla-pos', 'pos', pintarPos);
 
 chips.addEventListener('click', (e) => {
   const boton = e.target.closest('button.chip');

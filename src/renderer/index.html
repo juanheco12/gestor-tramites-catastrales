@@ -36,6 +36,10 @@
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/></svg>
           <span>Histórico</span>
         </button>
+        <button class="vista" data-vista="estadisticas" title="Estadísticas">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          <span>Estadísticas</span>
+        </button>
       </nav>
 
       <div class="sidebar-pie">
@@ -112,14 +116,14 @@
           <table id="tabla-tramites">
             <thead>
               <tr>
-                <th>Radicado</th>
-                <th>Trámite</th>
-                <th>Sector</th>
-                <th>Días</th>
-                <th>Mi estado</th>
-                <th>Prioridad</th>
-                <th class="th-obs">Mi observación</th>
-                <th>Bandeja</th>
+                <th data-col="numero_tramite">Radicado</th>
+                <th data-col="tipo">Trámite</th>
+                <th data-col="sector">Sector</th>
+                <th data-col="dias">Días</th>
+                <th data-col="mi_estado">Mi estado</th>
+                <th data-col="prioridad">Prioridad</th>
+                <th class="th-obs" data-col="observacion">Mi observación</th>
+                <th data-col="presente_en_bandeja">Bandeja</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -145,10 +149,10 @@
           <table id="tabla-historico">
             <thead>
               <tr>
-                <th>Radicado</th><th>Trámite</th><th>FMI</th>
-                <th>F. Realización</th><th>F. Envío</th>
-                <th>Estado seguimiento</th>
-                <th class="th-obs">Observación</th><th class="th-obs">Análisis</th>
+                <th data-col="numero_tramite">Radicado</th><th data-col="tipo">Trámite</th><th data-col="fmi">FMI</th>
+                <th data-col="fecha_realizacion">F. Realización</th><th data-col="fecha_envio">F. Envío</th>
+                <th data-col="estado_seguimiento">Estado seguimiento</th>
+                <th class="th-obs" data-col="observacion">Observación</th><th class="th-obs" data-col="analisis">Análisis</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -170,7 +174,31 @@
         <div class="tabla-contenedor tabla-alta">
           <table id="tabla-pos">
             <thead>
-              <tr><th>Categoría</th><th>Radicado</th><th class="th-obs">Detalle</th></tr>
+              <tr><th data-col="categoria">Categoría</th><th data-col="radicado">Radicado</th><th class="th-obs" data-col="detalle">Detalle</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ==================== VISTA ESTADÍSTICAS ==================== -->
+  <div id="vista-estadisticas" class="oculto">
+    <section class="tarjetas">
+      <div class="tarjeta"><span class="tarjeta-titulo">Enviados este año</span><span id="m-enviados-anio" class="tarjeta-valor">—</span></div>
+      <div class="tarjeta"><span class="tarjeta-titulo">Enviados en total</span><span id="m-enviados-total" class="tarjeta-valor">—</span></div>
+    </section>
+    <section class="filtros">
+      <div class="chips" id="chips-anio-estadisticas"></div>
+    </section>
+    <main>
+      <section class="panel">
+        <h2>Trámites enviados por mes <span class="pista">Según la fecha de envío</span></h2>
+        <div class="tabla-contenedor tabla-alta">
+          <table id="tabla-estadisticas">
+            <thead>
+              <tr><th>Mes</th><th>Enviados</th><th>Acumulado en el año</th></tr>
             </thead>
             <tbody></tbody>
           </table>
