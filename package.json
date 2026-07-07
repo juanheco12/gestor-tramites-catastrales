@@ -9,7 +9,7 @@
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "sync:cli": "node scripts/sync-cli.js",
     "dist": "electron-builder --win",
-    "release": "electron-builder --win --publish always"
+    "release": "electron-builder --win --publish always && node scripts/publicar-release.js"
   },
   "author": "Juan Hernandez",
   "license": "MIT",
@@ -49,7 +49,7 @@
         "provider": "github",
         "owner": "juanheco12",
         "repo": "gestor-tramites-catastrales",
-        "releaseType": "release"
+        "releaseType": "draft"
       }
     ],
     "extraResources": [
