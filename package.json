@@ -48,7 +48,8 @@
       {
         "provider": "github",
         "owner": "juanheco12",
-        "repo": "gestor-tramites-catastrales"
+        "repo": "gestor-tramites-catastrales",
+        "releaseType": "release"
       }
     ],
     "extraResources": [
