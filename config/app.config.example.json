@@ -1,0 +1,68 @@
+{
+  "configVersion": 3,
+  "app": {
+    "dbPath": "data/bandeja.db",
+    "logsDir": "logs",
+    "exportXlsxPath": "data/Bandeja.xlsx"
+  },
+  "bitacora": {
+    "activa": false,
+    "xlsxPath": "C:/Users/TU-USUARIO/Desktop/BITACORA.xlsx",
+    "hoja": "DP TRAMITES",
+    "backupsDir": "data/backups",
+    "abrirTrasActualizar": false
+  },
+  "browser": {
+    "userDataDir": "data/browser-session",
+    "headless": true,
+    "timeoutMs": 30000,
+    "navegadorVisibleParaLogin": true
+  },
+  "bandeja": {
+    "url": "https://catastromonteria.com.co/resolucion2ND.aspx",
+    "loginManualTimeoutMs": 300000,
+    "selectors": {
+      "tabla": "table[id*='Gv'], table[id*='Grid'], table.GridView, main table, form table",
+      "filas": "tbody tr",
+      "encabezados": "thead th",
+      "indicadorLogin": "input[type='password'], #ImgIniciarSesion",
+      "paginadorSiguiente": "a[title*='iguiente'], .pagination .next:not(.disabled), a[rel='next']:not(.disabled)",
+      "login": {
+        "url": "https://catastromonteria.com.co/login.aspx",
+        "usuario": "#ctl00_ContentPlaceHolder1_TLogin",
+        "clave": "#ctl00_ContentPlaceHolder1_TClave",
+        "entrar": "#ctl00_ContentPlaceHolder1_BtnAceptar"
+      }
+    },
+    "accionesApertura": [
+      "input[type='image']:near(:text('NÚMERO'), 300)",
+      "input[type='image'][id*='usca']",
+      "input[type='image'][src*='lupa' i]",
+      "img[src*='lupa' i]",
+      "input[type='image'][src*='buscar' i]",
+      "input[type='image'][src*='search' i]",
+      "button[id*='usca']"
+    ],
+    "validacion": {
+      "patronNumeroTramite": "^\\d{2,4}-\\d{1,6}$"
+    },
+    "paginacion": {
+      "habilitada": true,
+      "maxPaginas": 100,
+      "esperaTrasPaginaMs": 1500
+    },
+    "columnas": {
+      "numero_tramite": ["rad", "radicado", "radicados", "no radicado", "numero de radicado", "numero de tramite", "nro tramite", "no tramite", "numero", "expediente"],
+      "tipo": ["clase", "mutacion", "tramite", "tipo", "tipo de tramite", "tipo de mutacion", "tipo tramite", "clase de mutacion"],
+      "estado": ["estado", "estatus", "situacion", "estado tramite", "estado del tramite"],
+      "fecha": ["fecha asig", "fecha asignacion", "fecha de asignacion", "fecha", "fecha radicacion", "fecha de radicacion", "fecha envio", "fecha de envio", "fecha realizacion", "fecha solicitud"],
+      "solicitante": ["solicitante", "peticionario", "propietario", "interesado", "nombre solicitante", "nombre del solicitante", "nombres"]
+    }
+  },
+  "sync": {
+    "reintentos": 3,
+    "backoffBaseMs": 2000,
+    "backoffFactor": 2,
+    "autoCadaMinutos": 10
+  }
+}

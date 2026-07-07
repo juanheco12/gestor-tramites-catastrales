@@ -1,0 +1,96 @@
+{
+  "name": "gestor-tramites-catastrales",
+  "version": "1.10.0",
+  "description": "Gestor de Trámites Catastrales - sincroniza la bandeja del aplicativo web y organiza los trámites del ejecutor",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "sync:cli": "node scripts/sync-cli.js",
+    "dist": "electron-builder --win",
+    "release": "electron-builder --win --publish always"
+  },
+  "author": "Juan Hernandez",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/juanheco12/gestor-tramites-catastrales.git"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "electron-updater": "^6.8.9",
+    "exceljs": "^4.4.0",
+    "playwright": "^1.47.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "electron": "^31.0.0",
+    "electron-builder": "^26.15.3",
+    "png-to-ico": "^3.0.2"
+  },
+  "build": {
+    "appId": "com.catastro.gestortramites",
+    "productName": "Gestor de Tramites Catastrales",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "config/app.config.json",
+      "package.json",
+      "!**/*.md"
+    ],
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "juanheco12",
+        "repo": "gestor-tramites-catastrales"
+      }
+    ],
+    "extraResources": [
+      {
+        "from": "C:/Users/Laptop HP 0100/AppData/Local/ms-playwright",
+        "to": "ms-playwright",
+        "filter": [
+          "chromium-*/**",
+          "chromium_headless_shell-*/**",
+          "winldd-*/**"
+        ]
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Gestor de Tramites",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "artifactName": "GestorTramites-Setup-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "GestorTramites-Portable-${version}.exe"
+    }
+  }
+}

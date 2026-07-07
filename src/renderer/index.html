@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'" />
+  <title>Gestor de Trámites Catastrales</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-layout">
+    <!-- ==================== PANEL LATERAL IZQUIERDO ==================== -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-cabecera">
+        <span class="sidebar-logo" aria-hidden="true">
+          <img src="logo-sidebar.png" width="34" height="34" alt="" />
+        </span>
+        <span class="sidebar-marca">
+          <span class="sidebar-titulo">Gestor de Trámites</span>
+          <span class="sidebar-subtitulo">Catastrales</span>
+        </span>
+        <button id="btn-colapsar" class="sidebar-colapsar" title="Contraer menú" aria-label="Contraer menú">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+      </div>
+
+      <nav class="vistas sidebar-nav">
+        <button class="vista activo" data-vista="bandeja" title="Bandeja">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+          <span>Bandeja</span>
+        </button>
+        <button class="vista" data-vista="historico" title="Histórico">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
+          <span>Histórico</span>
+        </button>
+        <button class="vista" data-vista="seguimientos" title="Seguimientos">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/></svg>
+          <span>Seguimientos</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-pie">
+        <button id="btn-perfil" class="sidebar-item" title="Mi perfil">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+          <span>Mi perfil</span>
+        </button>
+        <button id="btn-cerrar-sesion" class="sidebar-item sidebar-item-salir" title="Cerrar sesión">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          <span>Cerrar sesión</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ==================== ÁREA DE CONTENIDO ==================== -->
+    <div class="contenido">
+      <header class="barra">
+        <h1>TRÁMITES ASIGNADOS</h1>
+        <div class="acciones">
+          <div class="menu-acciones">
+            <button id="btn-acciones" class="btn-secundario btn-con-icono" aria-haspopup="true" aria-expanded="false">
+              Acciones
+              <svg class="chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div id="menu-acciones-lista" class="menu-desplegable oculto" role="menu">
+              <button id="btn-importar" class="menu-item" role="menuitem">Importar Excel</button>
+              <button id="btn-exportar" class="menu-item" role="menuitem">Exportar Excel</button>
+              <button id="btn-exportar-visitas" class="menu-item" role="menuitem">Exportar Excel de visitas</button>
+            </div>
+          </div>
+
+          <button id="btn-sincronizar" class="btn-icono" title="Sincronizar bandeja">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <section id="estado" class="estado oculto">
+        <span id="estado-mensaje" class="estado-mensaje"></span>
+        <button id="estado-cerrar" class="estado-cerrar" title="Cerrar" aria-label="Cerrar">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </section>
+
+  <!-- ==================== VISTA BANDEJA ==================== -->
+  <div id="vista-bandeja">
+    <section class="tarjetas">
+      <div class="tarjeta"><span class="tarjeta-titulo">En bandeja</span><span id="m-bandeja" class="tarjeta-valor">—</span></div>
+      <div class="tarjeta"><span class="tarjeta-titulo">Por estudiar</span><span id="m-estudiar" class="tarjeta-valor">—</span></div>
+      <div class="tarjeta">
+        <span class="tarjeta-titulo">Requieren visita</span>
+        <span id="m-visita" class="tarjeta-valor">—</span>
+      </div>
+      <div class="tarjeta tarjeta-alerta"><span class="tarjeta-titulo">Devueltos</span><span id="m-devueltos" class="tarjeta-valor">—</span></div>
+    </section>
+
+    <section class="filtros">
+      <div id="chips" class="chips">
+        <button class="chip activo" data-filtro="bandeja">En bandeja</button>
+        <button class="chip" data-filtro="por_estudiar">Por estudiar</button>
+        <button class="chip" data-filtro="estudiado">Estudiados</button>
+        <button class="chip" data-filtro="visita">Visita</button>
+        <button class="chip" data-filtro="enviado">Enviados</button>
+        <button class="chip" data-filtro="devuelto">Devueltos</button>
+        <button class="chip" data-filtro="todos">Todos</button>
+      </div>
+      <input id="buscador" type="search" placeholder="Buscar radicado, trámite, FMI u observación..." />
+    </section>
+
+    <main>
+      <section class="panel">
+        <h2>Trámites <span id="contador-tramites" class="badge"></span> <span class="pista">Clic en el radicado para abrir la ficha completa</span></h2>
+        <div class="tabla-contenedor tabla-alta">
+          <table id="tabla-tramites">
+            <thead>
+              <tr>
+                <th>Radicado</th>
+                <th>Trámite</th>
+                <th>Sector</th>
+                <th>Días</th>
+                <th>Mi estado</th>
+                <th>Prioridad</th>
+                <th class="th-obs">Mi observación</th>
+                <th>Bandeja</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ==================== VISTA HISTÓRICO ==================== -->
+  <div id="vista-historico" class="oculto">
+    <section class="filtros">
+      <div class="chips" id="chips-anio">
+        <button class="chip activo" data-anio="todos">Todos los años</button>
+      </div>
+      <input id="buscador-historico" type="search" placeholder="Buscar por radicado, FMI, trámite u observación..." />
+      <button id="btn-agregar-historico" class="btn-secundario">Agregar trámite</button>
+    </section>
+    <main>
+      <section class="panel">
+        <h2>Histórico de trámites <span id="contador-historico" class="badge"></span> <span class="pista">Solo trámites con fecha de realización o de envío, en orden cronológico — igual que su bitácora</span></h2>
+        <div class="tabla-contenedor tabla-alta">
+          <table id="tabla-historico">
+            <thead>
+              <tr>
+                <th>Radicado</th><th>Trámite</th><th>FMI</th>
+                <th>F. Realización</th><th>F. Envío</th>
+                <th>Estado seguimiento</th>
+                <th class="th-obs">Observación</th><th class="th-obs">Análisis</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ==================== VISTA SEGUIMIENTOS ==================== -->
+  <div id="vista-seguimientos" class="oculto">
+    <section class="filtros">
+      <div class="chips" id="chips-categoria"></div>
+      <input id="buscador-pos" type="search" placeholder="Buscar por radicado..." />
+    </section>
+    <main>
+      <section class="panel">
+        <h2>Seguimientos pos-trámite <span id="contador-pos" class="badge"></span></h2>
+        <div class="tabla-contenedor tabla-alta">
+          <table id="tabla-pos">
+            <thead>
+              <tr><th>Categoría</th><th>Radicado</th><th class="th-obs">Detalle</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+    </div><!-- fin .contenido -->
+  </div><!-- fin .app-layout -->
+
+  <!-- ==================== MODAL MI PERFIL ==================== -->
+  <div id="modal-perfil" class="modal oculto">
+    <div class="modal-caja modal-ancha">
+      <h2>Mi perfil</h2>
+
+      <section class="perfil-seccion">
+        <h3>Apariencia</h3>
+        <div class="menu-acciones">
+          <button id="btn-tema" class="btn-secundario btn-con-icono" aria-haspopup="true" aria-expanded="false" title="Tema visual">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2a10 10 0 0 0 0 20 2.5 2.5 0 0 0 2-4 2.5 2.5 0 0 1 2-4h1a5 5 0 0 0 5-5c0-4.4-4.5-7-10-7z"/></svg>
+            Tema
+            <svg class="chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div id="menu-tema-lista" class="menu-desplegable oculto" role="menu">
+            <button class="menu-item menu-item-tema" data-tema="claro" role="menuitemradio">
+              <svg class="ico-tema" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+              <span>Claro</span>
+              <svg class="ico-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+            <button class="menu-item menu-item-tema" data-tema="oscuro" role="menuitemradio">
+              <svg class="ico-tema" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+              <span>Oscuro</span>
+              <svg class="ico-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+            <button class="menu-item menu-item-tema" data-tema="corporativo" role="menuitemradio">
+              <svg class="ico-tema" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+              <span>Corporativo</span>
+              <svg class="ico-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="perfil-seccion">
+        <h3>Acceso al aplicativo edis</h3>
+        <p id="perfil-acceso-estado" class="modal-texto"></p>
+        <button id="btn-cambiar-acceso" class="btn-secundario">Configurar usuario y clave</button>
+      </section>
+
+      <section class="perfil-seccion">
+        <h3>Mantenimiento</h3>
+        <p class="modal-texto">Deja el sistema en cero (borra trámites, estados, observaciones e historial) para empezar de nuevo. Útil para probar la bitácora de otro ejecutor o reinstalar limpio.</p>
+        <button id="btn-restablecer" class="btn-peligro">Restablecer el sistema a cero</button>
+      </section>
+
+      <section class="perfil-seccion">
+        <h3>Historial de sincronizaciones</h3>
+        <div class="tabla-contenedor">
+          <table id="tabla-logs">
+            <thead>
+              <tr>
+                <th>Inicio</th><th>Duración</th><th>Leídos</th><th>Nuevos</th>
+                <th>Actualizados</th><th>Sin cambios</th><th>Estado</th><th>Errores</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <div class="modal-botones">
+        <button id="perfil-cerrar" class="btn-secundario">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL ACCESO EDIS ==================== -->
+  <div id="modal-acceso" class="modal oculto">
+    <div class="modal-caja">
+      <h2>Acceso al aplicativo edis</h2>
+      <p class="modal-texto">
+        Guarde su usuario y clave UNA sola vez: quedan cifrados con la bóveda
+        de Windows y el robot iniciará sesión solo, sin ventanas ni preguntas.
+      </p>
+      <label>Usuario
+        <input id="acceso-usuario" type="text" autocomplete="off" />
+      </label>
+      <label>Clave
+        <input id="acceso-clave" type="password" autocomplete="off" />
+      </label>
+      <p id="acceso-estado" class="modal-nota"></p>
+      <div class="modal-botones">
+        <button id="acceso-borrar" class="btn-secundario">Borrar guardadas</button>
+        <button id="acceso-cancelar" class="btn-secundario">Cancelar</button>
+        <button id="acceso-guardar" class="btn-primario">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL AGREGAR TRÁMITE (histórico manual) ==================== -->
+  <div id="modal-agregar" class="modal oculto">
+    <div class="modal-caja">
+      <h2>Agregar trámite al histórico</h2>
+      <p class="modal-texto">
+        Para un trámite que ya estudió y dejó en espera (p. ej. mientras avanza
+        la parte gráfica). Si el radicado ya existe, se completa su ficha en
+        vez de crear uno nuevo.
+      </p>
+      <label>Radicado
+        <input id="agregar-radicado" type="text" placeholder="2026-1234" />
+      </label>
+      <label>Trámite
+        <input id="agregar-tramite" type="text" placeholder="Mutación de tercera..." />
+      </label>
+      <label>FMI
+        <input id="agregar-fmi" type="text" />
+      </label>
+      <label>Fecha de realización
+        <input id="agregar-fecha-realizacion" type="date" />
+      </label>
+      <label>Estado de seguimiento
+        <input id="agregar-estado-seguimiento" type="text" value="EN ESPERA" />
+      </label>
+      <label>Observación
+        <input id="agregar-observacion" type="text" placeholder="PARTE GRAFICA..." />
+      </label>
+      <p id="agregar-estado" class="modal-nota"></p>
+      <div class="modal-botones">
+        <button id="agregar-cancelar" class="btn-secundario">Cancelar</button>
+        <button id="agregar-guardar" class="btn-primario">Agregar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL FICHA DEL TRÁMITE ==================== -->
+  <div id="modal-ficha" class="modal oculto">
+    <div class="modal-caja modal-ancha">
+      <h2 id="ficha-titulo">Trámite</h2>
+      <div id="ficha-datos" class="ficha-datos"></div>
+      <div class="ficha-campos">
+        <label>Mi estado
+          <select id="ficha-estado"></select>
+        </label>
+        <label>Estado de seguimiento
+          <input id="ficha-estado-seguimiento" type="text" placeholder="EN REVISION, EN ESPERA..." />
+        </label>
+        <label>Prioridad
+          <input id="ficha-prioridad" type="text" />
+        </label>
+        <label>Sector
+          <input id="ficha-sector" type="text" />
+        </label>
+        <label>FMI
+          <input id="ficha-fmi" type="text" />
+        </label>
+        <label>Fecha realización
+          <input id="ficha-fecha-realizacion" type="date" />
+        </label>
+        <label>Fecha envío
+          <input id="ficha-fecha-envio" type="date" />
+        </label>
+      </div>
+      <label>Mi observación
+        <textarea id="ficha-observacion" rows="4"></textarea>
+      </label>
+      <label>Análisis jurídico
+        <textarea id="ficha-analisis" rows="3"></textarea>
+      </label>
+      <div class="modal-botones">
+        <button id="ficha-eliminar" class="btn-peligro oculto">Eliminar (agregado a mano)</button>
+        <button id="ficha-cancelar" class="btn-secundario">Cerrar</button>
+        <button id="ficha-guardar" class="btn-primario">Guardar cambios</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
