@@ -145,7 +145,24 @@ body {
   flex: 1;
   min-width: 0;
   height: 100vh;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#vista-bandeja,
+#vista-historico,
+#vista-seguimientos {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+#vista-bandeja.oculto,
+#vista-historico.oculto,
+#vista-seguimientos.oculto {
+  display: none;
 }
 
 .contenido .barra {
@@ -543,7 +560,7 @@ body {
   color: var(--color-texto);
 }
 
-main { padding: 14px 24px 24px; display: grid; gap: 16px; }
+main { padding: 14px 24px 24px; display: flex; flex-direction: column; gap: 16px; flex: 1; min-height: 0; }
 
 .panel {
   background: var(--color-panel);
@@ -551,6 +568,10 @@ main { padding: 14px 24px 24px; display: grid; gap: 16px; }
   border-radius: 8px;
   padding: 14px 16px;
   box-shadow: var(--sombra-panel);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .panel h2 { font-size: 15px; margin-bottom: 10px; }
@@ -568,7 +589,7 @@ main { padding: 14px 24px 24px; display: grid; gap: 16px; }
 }
 
 .tabla-contenedor { max-height: 320px; overflow: auto; }
-.tabla-alta { max-height: 480px; }
+.tabla-alta { max-height: none; flex: 1; min-height: 0; }
 
 table { width: 100%; border-collapse: collapse; }
 
