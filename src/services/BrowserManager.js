@@ -227,11 +227,30 @@ class BrowserManager {
    * Inicia sesión en el aplicativo escribiendo las credenciales guardadas
    * en el formulario de login (todo oculto, sin ventanas).
    *
+   * Reintenta una vez completo (re-escribir y reenviar el formulario) antes
+   * de darse por vencido: con una red de oficina más lenta, el postback de
+   * ASP.NET a veces tarda más de lo que alcanza a esperar el primer sondeo,
+   * y eso se veía como "clave incorrecta" cuando en realidad la sesión sí
+   * había quedado iniciada un instante después.
+   *
    * @param {import('playwright').Page} page
    * @param {{usuario: string, clave: string}} credenciales
    * @returns {Promise<boolean>} true si la bandeja quedó accesible
    */
   async _loginAutomatico(page, credenciales) {
+    for (let intento = 1; intento <= 2; intento++) {
+      const exito = await this._intentarLoginAutomatico(page, credenciales);
+      if (exito) return true;
+      if (intento === 1) {
+        this.logger.warn('Login automático: primer intento sin confirmar sesión, reintentando...');
+        await esperar(2000);
+      }
+    }
+    return false;
+  }
+
+  /** Un intento completo de login automático (usado por _loginAutomatico, que reintenta). */
+  async _intentarLoginAutomatico(page, credenciales) {
     const { url, selectors } = this.config.bandeja;
     const login = selectors.login || {};
     const timeout = this.config.browser.timeoutMs;
@@ -247,18 +266,25 @@ class BrowserManager {
       await campoClave.fill(credenciales.clave);
       await page.locator(login.entrar || "input[type='submit'][value*='NTRAR']").first().click();
 
-      // Esperar el postback y verificar contra el servidor que hay sesión.
       await page.waitForLoadState('domcontentloaded', { timeout }).catch(() => {});
-      await esperar(1500);
 
-      const respuesta = await page
-        .context()
-        .request.get(url, { maxRedirects: 0, timeout })
-        .catch(() => null);
-      if (!respuesta || respuesta.status() !== 200) return false;
+      // Sondea varias veces en vez de una sola comprobación a los 1.5s: el
+      // postback puede tardar más en una red lenta y no hay que confundir
+      // "todavía no terminó" con "credenciales incorrectas".
+      for (let i = 0; i < 4; i++) {
+        await esperar(1500);
+        const respuesta = await page
+          .context()
+          .request.get(url, { maxRedirects: 0, timeout })
+          .catch(() => null);
+        if (!respuesta || respuesta.status() !== 200) continue;
 
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
-      return new URL(page.url()).pathname.toLowerCase() === new URL(url).pathname.toLowerCase();
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+        if (new URL(page.url()).pathname.toLowerCase() === new URL(url).pathname.toLowerCase()) {
+          return true;
+        }
+      }
+      return false;
     } catch (error) {
       this.logger.warn(`Login automático interrumpido: ${error.message.split('\n')[0]}`);
       return false;

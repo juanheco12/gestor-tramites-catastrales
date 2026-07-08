@@ -448,14 +448,22 @@ let anioEstadisticas = String(new Date().getFullYear());
  * radicado, para separar por hoja de bitácora), las estadísticas agrupan
  * por la fecha de envío real: es lo que responde "cuántos mandé este
  * mes", sin importar de qué año sea el radicado.
+ *
+ * Solo se cuentan fechas ya normalizadas a AAAA-MM-DD. Una fecha de envío
+ * con un formato que el importador no pudo reconocer NO se descarta en
+ * silencio: pintarEstadisticas() la señala aparte para que se note el
+ * dato raro en vez de faltar un trámite sin explicación.
  */
+const PATRON_FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/;
+
 function anioEnvioDe(t) {
-  return t.fecha_envio ? t.fecha_envio.slice(0, 4) : null;
+  return PATRON_FECHA_ISO.test(t.fecha_envio || '') ? t.fecha_envio.slice(0, 4) : null;
 }
 
 function mesEnvioDe(t) {
-  const n = t.fecha_envio ? parseInt(t.fecha_envio.slice(5, 7), 10) : NaN;
-  return Number.isFinite(n) ? n - 1 : null;
+  if (!PATRON_FECHA_ISO.test(t.fecha_envio || '')) return null;
+  const n = parseInt(t.fecha_envio.slice(5, 7), 10);
+  return n >= 1 && n <= 12 ? n - 1 : null;
 }
 
 function pintarChipsAnioEstadisticas() {
@@ -476,11 +484,23 @@ function pintarChipsAnioEstadisticas() {
 }
 
 function pintarEstadisticas() {
-  const enviados = tramites.filter((t) => t.fecha_envio);
+  const conFechaEnvio = tramites.filter((t) => t.fecha_envio);
+  const enviados = conFechaEnvio.filter((t) => anioEnvioDe(t) !== null);
+  const noReconocidos = conFechaEnvio.length - enviados.length;
   const delAnio = enviados.filter((t) => anioEnvioDe(t) === anioEstadisticas);
 
   document.getElementById('m-enviados-anio').textContent = String(delAnio.length);
   document.getElementById('m-enviados-total').textContent = String(enviados.length);
+
+  const avisoEl = document.getElementById('estadisticas-aviso');
+  if (noReconocidos > 0) {
+    avisoEl.textContent =
+      `${noReconocidos} trámite(s) tienen fecha de envío pero en un formato que no se pudo interpretar ` +
+      `(no están contados arriba). Abra su ficha y vuelva a escribir la fecha de envío para corregirlo.`;
+    avisoEl.classList.remove('oculto');
+  } else {
+    avisoEl.classList.add('oculto');
+  }
 
   const porMes = new Array(12).fill(0);
   for (const t of delAnio) {
@@ -816,10 +836,12 @@ const agregarEstado = document.getElementById('agregar-estado');
 document.getElementById('btn-agregar-historico').addEventListener('click', () => {
   document.getElementById('agregar-radicado').value = '';
   document.getElementById('agregar-tramite').value = '';
-  document.getElementById('agregar-fmi').value = '';
+  // ORIP Montería: casi todos los FMI empiezan con este prefijo, solo falta
+  // completar el número. Se deja listo para que el usuario siga escribiendo.
+  document.getElementById('agregar-fmi').value = '140-';
   document.getElementById('agregar-fecha-realizacion').value = new Date().toISOString().slice(0, 10);
   document.getElementById('agregar-estado-seguimiento').value = 'EN ESPERA';
-  document.getElementById('agregar-observacion').value = '';
+  document.getElementById('agregar-observacion').value = 'PARTE GRAFICA';
   agregarEstado.textContent = '';
   modalAgregar.classList.remove('oculto');
   document.getElementById('agregar-radicado').focus();

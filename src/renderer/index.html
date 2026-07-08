@@ -192,6 +192,7 @@
     <section class="filtros">
       <div class="chips" id="chips-anio-estadisticas"></div>
     </section>
+    <p id="estadisticas-aviso" class="modal-nota oculto"></p>
     <main>
       <section class="panel">
         <h2>Trámites enviados por mes <span class="pista">Según la fecha de envío</span></h2>
@@ -311,7 +312,16 @@
         <input id="agregar-radicado" type="text" placeholder="2026-1234" />
       </label>
       <label>Trámite
-        <input id="agregar-tramite" type="text" placeholder="Mutación de tercera..." />
+        <select id="agregar-tramite">
+          <option value="">Seleccione…</option>
+          <option value="1-Mutacion de Primera-">1-Mutacion de Primera-</option>
+          <option value="2-Mutación de Segunda-">2-Mutación de Segunda-</option>
+          <option value="3-Mutación de Tercera-">3-Mutación de Tercera-</option>
+          <option value="10-Revisión de avalúo-">10-Revisión de avalúo-</option>
+          <option value="5-Mutación de Quinta-">5-Mutación de Quinta-</option>
+          <option value="6-Rectificación general de datos-">6-Rectificación general de datos-</option>
+          <option value="7-Cancelación de predio-">7-Cancelación de predio-</option>
+        </select>
       </label>
       <label>FMI
         <input id="agregar-fmi" type="text" />
@@ -323,7 +333,7 @@
         <input id="agregar-estado-seguimiento" type="text" value="EN ESPERA" />
       </label>
       <label>Observación
-        <input id="agregar-observacion" type="text" placeholder="PARTE GRAFICA..." />
+        <input id="agregar-observacion" type="text" />
       </label>
       <p id="agregar-estado" class="modal-nota"></p>
       <div class="modal-botones">

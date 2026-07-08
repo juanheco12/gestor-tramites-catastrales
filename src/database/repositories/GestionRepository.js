@@ -155,6 +155,7 @@ class GestionRepository {
             fecha_realizacion = COALESCE(fecha_realizacion, date('now', 'localtime')),
             fecha_envio = COALESCE(fecha_envio, date('now', 'localtime')),
             observacion = 'OK',
+            analisis = COALESCE(NULLIF(analisis, ''), 'OK'),
             estado_seguimiento = 'EN REVISION',
             actualizado_en = datetime('now', 'localtime')
         WHERE mi_estado NOT IN ('enviado', 'finalizado')

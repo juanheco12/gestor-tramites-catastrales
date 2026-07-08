@@ -19,6 +19,18 @@ function normalizarFecha(texto) {
   if (!t) return t;
   if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
 
+  // DD/MM/AAAA o D/M/AAAA (con / o -), incluido día o mes de un solo dígito
+  // ("5/3/2026"): el formato más común al escribir fechas a mano.
+  const conSeparador = t.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (conSeparador) {
+    const d = Number(conSeparador[1]);
+    const m = Number(conSeparador[2]);
+    const a = Number(conSeparador[3]);
+    if (d >= 1 && d <= 31 && m >= 1 && m <= 12 && a >= 2000 && a <= 2100) {
+      return `${a}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+  }
+
   const soloDigitos = t.replace(/\D/g, '');
   if (soloDigitos.length === 8) {
     const dia = soloDigitos.slice(0, 2);
