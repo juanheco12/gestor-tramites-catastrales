@@ -170,19 +170,18 @@ class GestionRepository {
   }
 
   /**
-   * Elimina por completo un trámite agregado a MANO por error (botón
-   * "Agregar trámite"). Solo borra si origen='manual': un trámite real,
-   * sincronizado desde el aplicativo o importado de un Excel, NUNCA se
-   * elimina (regla de negocio del sistema completo).
+   * Elimina por completo un trámite (de cualquier origen: agregado a mano,
+   * sincronizado o importado). Pensado para limpiar duplicados o entradas
+   * erróneas que la deteccion automatica de "enviado" a veces marca mal
+   * (p. ej. un trámite que desaparece de la bandeja del aplicativo sin
+   * haberse enviado en realidad). El diálogo de confirmación en el
+   * proceso principal es la única salvaguarda: no hay deshacer.
    * @param {number} tramiteId
    * @returns {boolean} true si se eliminó
    */
-  eliminarManual(tramiteId) {
-    const tramite = this.db.prepare('SELECT id, origen FROM tramites WHERE id = ?').get(tramiteId);
+  eliminar(tramiteId) {
+    const tramite = this.db.prepare('SELECT id FROM tramites WHERE id = ?').get(tramiteId);
     if (!tramite) return false;
-    if (tramite.origen !== 'manual') {
-      throw new Error('Solo se pueden eliminar trámites agregados a mano; los reales nunca se borran.');
-    }
 
     const borrar = this.db.transaction(() => {
       this.db.prepare('DELETE FROM tramites_historial WHERE tramite_id = ?').run(tramiteId);

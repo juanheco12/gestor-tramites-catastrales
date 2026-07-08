@@ -541,9 +541,6 @@ function abrirFicha(tramiteId) {
   fichaTramiteId = tramiteId;
 
   document.getElementById('ficha-titulo').textContent = `Trámite ${t.numero_tramite}`;
-  // Solo se puede eliminar lo que el propio usuario agregó a mano (nunca
-  // datos reales sincronizados o importados: esos no se borran jamás).
-  document.getElementById('ficha-eliminar').classList.toggle('oculto', t.origen !== 'manual');
 
   const extra = extraDe(t);
   // "..." al final = el propio aplicativo (no nuestro sistema) ya recorta

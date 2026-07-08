@@ -137,19 +137,22 @@ function registrarIpc(contenedor, obtenerVentana) {
     try {
       const respuesta = await dialog.showMessageBox(obtenerVentana(), {
         type: 'warning',
-        title: 'Eliminar trámite agregado a mano',
-        message: '¿Eliminar este trámite del histórico?',
-        detail: 'Solo se puede eliminar porque lo agregó usted a mano. No se puede deshacer.',
+        title: 'Eliminar trámite',
+        message: '¿Eliminar este trámite por completo?',
+        detail:
+          'Se borra el trámite, su gestión y su historial. Úselo para quitar duplicados o ' +
+          'trámites marcados como enviados por error (p. ej. si desapareció de la bandeja sin ' +
+          'haberse enviado en realidad). No se puede deshacer.',
         buttons: ['Cancelar', 'Sí, eliminar'],
         defaultId: 0,
         cancelId: 0,
       });
       if (respuesta.response !== 1) return { ok: false, cancelado: true };
 
-      const eliminado = gestionRepository.eliminarManual(tramiteId);
+      const eliminado = gestionRepository.eliminar(tramiteId);
       return { ok: eliminado, error: eliminado ? undefined : 'El trámite no existe.' };
     } catch (error) {
-      logger.error(`IPC eliminar manual: ${error.message}`);
+      logger.error(`IPC eliminar trámite: ${error.message}`);
       return { ok: false, error: error.message };
     }
   });
