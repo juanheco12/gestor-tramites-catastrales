@@ -128,10 +128,19 @@ class BrowserManager {
 
     {
       if (!interactivo) {
+        // Con credenciales guardadas, un fallo puntual es más probable que
+        // sea un tropiezo de red que una clave realmente incorrecta: se
+        // deja como error normal para que la sincronización automática
+        // agote sus reintentos con espera (config.sync.reintentos) antes
+        // de avisarle al usuario. Sin credenciales guardadas no hay nada
+        // que reintentar: eso sí es no reintentable.
+        if (credencialesGuardadas) {
+          throw new Error(
+            'El login automático falló: verifique sus credenciales guardadas con el botón Acceso edis.'
+          );
+        }
         throw new ErrorNoReintentable(
-          credencialesGuardadas
-            ? 'El login automático falló: verifique sus credenciales guardadas con el botón Acceso edis.'
-            : 'La sesión expiró y no hay credenciales guardadas. Use el botón Acceso edis para guardarlas y no volver a iniciar sesión a mano.'
+          'La sesión expiró y no hay credenciales guardadas. Use el botón Acceso edis para guardarlas y no volver a iniciar sesión a mano.'
         );
       }
       if (!this.config.browser.navegadorVisibleParaLogin) {

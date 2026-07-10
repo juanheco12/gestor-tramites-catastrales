@@ -18,17 +18,25 @@ const { registrarIpc } = require('./ipc');
 let ventana = null;
 let contenedor = null;
 let temporizadorAuto = null;
+let fallosSeguidosAuto = 0;
 
 /**
- * Sincronización automática silenciosa (sin ventanas ni login). Siempre
- * avisa con UNA sola notificación de Windows por ciclo (éxito o fallo) para
- * que el usuario tenga la confirmación de que el sistema sigue vivo, sin
- * bombardearlo con varios avisos separados por cada tipo de cambio.
+ * Sincronización automática silenciosa (sin ventanas ni login). Avisa con
+ * UNA sola notificación de Windows por ciclo exitoso, sin bombardear al
+ * usuario con avisos separados por cada tipo de cambio.
+ *
+ * Un solo fallo casi siempre es un tropiezo pasajero de red (ya se
+ * reintenta varias veces puertas adentro antes de llegar acá) que se
+ * resuelve solo en el próximo ciclo automático: avisar de entrada
+ * generaría una alarma falsa recurrente. Solo se notifica al usuario a
+ * partir del SEGUNDO fallo seguido, cuando ya es más probable que sea un
+ * problema real (sesión/credenciales) que necesite su atención.
  */
 async function sincronizarAutomatico() {
   const { syncService, logger } = contenedor;
   try {
     const resumen = await syncService.sincronizar({ interactivo: false });
+    fallosSeguidosAuto = 0;
 
     const partes = [];
     if (resumen.nuevos > 0) partes.push(`${resumen.nuevos} nuevo(s)`);
@@ -43,12 +51,15 @@ async function sincronizarAutomatico() {
           : `${resumen.leidos} trámites revisados, sin novedades.`,
     }).show();
   } catch (error) {
+    fallosSeguidosAuto++;
     // Sesión vencida o red caída: se registra y se reintenta en el próximo ciclo.
-    logger.warn(`Sincronización automática pospuesta: ${error.message}`);
-    new Notification({
-      title: 'No se pudo sincronizar',
-      body: 'Abra el programa: puede que deba iniciar sesión de nuevo en el aplicativo.',
-    }).show();
+    logger.warn(`Sincronización automática pospuesta (fallo ${fallosSeguidosAuto} seguido(s)): ${error.message}`);
+    if (fallosSeguidosAuto >= 2) {
+      new Notification({
+        title: 'No se pudo sincronizar',
+        body: 'Abra el programa: puede que deba iniciar sesión de nuevo en el aplicativo.',
+      }).show();
+    }
   }
 }
 
