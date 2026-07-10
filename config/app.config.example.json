@@ -1,5 +1,5 @@
 {
-  "configVersion": 3,
+  "configVersion": 4,
   "app": {
     "dbPath": "data/bandeja.db",
     "logsDir": "logs",
@@ -15,7 +15,7 @@
   "browser": {
     "userDataDir": "data/browser-session",
     "headless": true,
-    "timeoutMs": 30000,
+    "timeoutMs": 60000,
     "navegadorVisibleParaLogin": true
   },
   "bandeja": {

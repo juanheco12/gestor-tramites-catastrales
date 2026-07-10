@@ -441,6 +441,23 @@ class BandejaScraper {
         nuevos = this._filtrarTramites(filas, mapa, extras, numerosVistos);
       }
 
+      // Antes de dar la página por vacía (posible fin de la bandeja), se
+      // reintenta una vez tras una espera corta: en una red lenta la tabla
+      // puede tardar en renderizar justo después del clic en "siguiente",
+      // y confundir "todavía está cargando" con "ya no hay más datos" hace
+      // perder trámites reales de las páginas que quedaban por leer (esos
+      // trámites terminan marcados como "enviados" por error, porque el
+      // sistema los ve como desaparecidos de la bandeja).
+      if (nuevos.length === 0 && pagina > 1) {
+        await page.waitForTimeout(paginacion.esperaTrasPaginaMs);
+        filas = await leerFilas(selectors.filas);
+        nuevos = this._filtrarTramites(filas, mapa, extras, numerosVistos);
+        if (nuevos.length === 0) {
+          filas = await leerFilas('tr');
+          nuevos = this._filtrarTramites(filas, mapa, extras, numerosVistos);
+        }
+      }
+
       tramites.push(...nuevos);
       this.logger.info(`Página ${pagina}: ${filas.length} filas, ${nuevos.length} trámites válidos`);
       if (nuevos.length > 0) {
@@ -450,8 +467,17 @@ class BandejaScraper {
       if (nuevos.length === 0) break; // página sin datos: no seguir paginando
       if (!paginacion.habilitada || pagina >= paginacion.maxPaginas) break;
 
-      const siguiente = marco.locator(selectors.paginadorSiguiente).first();
-      if (!(await siguiente.isVisible().catch(() => false))) break;
+      // El botón "siguiente" también puede tardar en aparecer en una red
+      // lenta: se reintenta un par de veces antes de asumir que ya no hay
+      // más páginas (en vez de cortar la lectura a mitad de camino).
+      let siguiente = marco.locator(selectors.paginadorSiguiente).first();
+      let hayMas = await siguiente.isVisible().catch(() => false);
+      for (let intento = 0; !hayMas && intento < 2; intento++) {
+        await page.waitForTimeout(1000);
+        siguiente = marco.locator(selectors.paginadorSiguiente).first();
+        hayMas = await siguiente.isVisible().catch(() => false);
+      }
+      if (!hayMas) break;
 
       await siguiente.click();
       await page.waitForTimeout(paginacion.esperaTrasPaginaMs);

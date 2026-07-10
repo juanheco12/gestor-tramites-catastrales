@@ -312,13 +312,30 @@ class BrowserManager {
         .then(() => etiqueta)
         .catch(() => null);
 
-    const resultado = await Promise.race([
+    let resultado = await Promise.race([
       esperarSelector(selectors.tabla, 'bandeja'),
       esperarSelector(selectors.indicadorLogin, 'login'),
     ]);
 
     if (resultado === null) {
-      // Ninguno apareció: tratarlo como sesión inválida para forzar login visible.
+      // Ninguno apareció dentro del timeout: antes de asumir sesión vencida,
+      // se recarga una vez y se reintenta (una red lenta puede tardar en
+      // servir la página completa, y confundir "todavía carga" con "no hay
+      // sesión" fuerza un re-login innecesario con credenciales que en
+      // realidad estaban bien).
+      this.logger.warn('No se detectó ni la bandeja ni el login a la primera; recargando y reintentando...');
+      try {
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: this.config.browser.timeoutMs });
+        resultado = await Promise.race([
+          esperarSelector(selectors.tabla, 'bandeja'),
+          esperarSelector(selectors.indicadorLogin, 'login'),
+        ]);
+      } catch {
+        resultado = null;
+      }
+    }
+
+    if (resultado === null) {
       this.logger.warn('No se detectó ni la bandeja ni el formulario de login; se asume sesión vencida.');
       return true;
     }
