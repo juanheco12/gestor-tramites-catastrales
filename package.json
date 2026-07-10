@@ -1,6 +1,6 @@
 {
   "name": "gestor-tramites-catastrales",
-  "version": "1.11.3",
+  "version": "1.11.4",
   "description": "Gestor de Trámites Catastrales - sincroniza la bandeja del aplicativo web y organiza los trámites del ejecutor",
   "main": "src/main/main.js",
   "scripts": {

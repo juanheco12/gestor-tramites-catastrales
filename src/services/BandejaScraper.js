@@ -186,9 +186,14 @@ class BandejaScraper {
       for (const marco of this._todosLosMarcos(page)) {
         try {
           const elemento = marco.locator(selector).first();
-          if (!(await elemento.isVisible().catch(() => false))) continue;
+          // Si el selector no matchea nada en este marco, no hay nada que
+          // esperar. Si SÍ existe pero todavía no es clicable (la página
+          // recién terminó de cargar), se le da tiempo: click() ya espera
+          // a que se vuelva visible/estable en vez de descartarlo de una
+          // por un chequeo de visibilidad hecho demasiado pronto.
+          if ((await elemento.count().catch(() => 0)) === 0) continue;
           this.logger.info(`Abriendo la bandeja con la acción: ${selector}`);
-          await elemento.click({ timeout: 5000 });
+          await elemento.click({ timeout: 8000 });
           return selector;
         } catch {
           // Candidato no clicable en este marco; se prueba el siguiente.

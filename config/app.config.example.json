@@ -1,5 +1,5 @@
 {
-  "configVersion": 4,
+  "configVersion": 5,
   "app": {
     "dbPath": "data/bandeja.db",
     "logsDir": "logs",
@@ -35,6 +35,7 @@
       }
     },
     "accionesApertura": [
+      "#ctl00_ContentPlaceHolder1_BtnBuscaRad",
       "input[type='image']:near(:text('NÚMERO'), 300)",
       "input[type='image'][id*='usca']",
       "input[type='image'][src*='lupa' i]",
