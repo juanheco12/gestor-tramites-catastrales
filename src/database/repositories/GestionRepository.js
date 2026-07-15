@@ -16,6 +16,13 @@ const CAMPOS_EDITABLES = [
 const ESTADOS_VALIDOS = ['por_estudiar', 'estudiado', 'visita', 'enviado', 'devuelto', 'finalizado'];
 
 /**
+ * Palabras que, en el estado de seguimiento escrito a mano, indican que el
+ * trámite ya se envió a revisión (mismo criterio que usa el importador de
+ * Excel para detectar "enviado" sin columna de fecha separada).
+ */
+const PALABRAS_ENVIADO = ['EJECUTADO', 'TRAMITADO', 'EN REVISION'];
+
+/**
  * Acceso a los campos de gestión PROPIOS del ejecutor (tramites_gestion).
  * El robot de sincronización nunca pisa estos datos; solo automatiza dos
  * transiciones seguras: crear la fila al aparecer un trámite y marcar
@@ -60,6 +67,36 @@ class GestionRepository {
       .prepare(`UPDATE tramites_gestion SET ${sets.join(', ')} WHERE tramite_id = @tramite_id`)
       .run({ tramite_id: tramiteId, ...Object.fromEntries(aActualizar) });
 
+    // Autocompletado de "enviado": si el usuario escribe a mano un estado
+    // de seguimiento que indica que el trámite ya se envió a revisión
+    // (mismo criterio que el importador de Excel) y todavía no tiene fecha
+    // de envío, se completa con hoy — igual que ya hace el robot de
+    // sincronización cuando el trámite desaparece de la bandeja, pero para
+    // cuando el propio usuario lo escribe a mano en la ficha o al agregar
+    // un trámite al histórico.
+    let marcadoEnviadoAutomatico = false;
+    if (campos.estado_seguimiento !== undefined) {
+      const actual = this.db
+        .prepare('SELECT fecha_envio FROM tramites_gestion WHERE tramite_id = ?')
+        .get(tramiteId);
+      const pareceEnviado = PALABRAS_ENVIADO.some((p) =>
+        campos.estado_seguimiento.toUpperCase().includes(p)
+      );
+      if (pareceEnviado && !actual.fecha_envio) {
+        const setsAuto = [
+          "fecha_envio = date('now', 'localtime')",
+          "fecha_realizacion = COALESCE(fecha_realizacion, date('now', 'localtime'))",
+        ];
+        if (campos.mi_estado === undefined) setsAuto.push("mi_estado = 'enviado'");
+        this.db
+          .prepare(
+            `UPDATE tramites_gestion SET ${setsAuto.join(', ')}, actualizado_en = datetime('now', 'localtime') WHERE tramite_id = ?`
+          )
+          .run(tramiteId);
+        marcadoEnviadoAutomatico = true;
+      }
+    }
+
     // Reglas del flujo del ejecutor (solo si él no fijó el estado a mano):
     //  - prioridad VISITA, O la observación menciona "visita" (aunque no
     //    exista columna de prioridad) => estado "visita".
@@ -72,7 +109,7 @@ class GestionRepository {
     // deba aparecer en el Histórico. Esa fecha la pone el usuario a mano
     // (en la ficha o con "Agregar trámite"), igual que en su bitácora Excel:
     // "Histórico" ≠ "todo lo que está en la bandeja".
-    if (campos.mi_estado === undefined) {
+    if (campos.mi_estado === undefined && !marcadoEnviadoAutomatico) {
       const actual = this.db
         .prepare('SELECT mi_estado, prioridad, observacion FROM tramites_gestion WHERE tramite_id = ?')
         .get(tramiteId);
