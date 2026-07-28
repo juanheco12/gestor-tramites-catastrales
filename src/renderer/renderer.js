@@ -550,24 +550,73 @@ function pintarEstadisticas() {
 }
 
 /** Gráfico circular jurídica/normal de un mes puntual (clic en su fila). */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const DONUT_RADIO = 48;
+const DONUT_GROSOR = 22;
+const DONUT_PERIMETRO = 2 * Math.PI * DONUT_RADIO;
+// Hueco entre segmentos: los deja legibles como dos piezas separadas en vez
+// de un solo anillo con un cambio de color (también ayuda a quien no
+// distingue bien los dos colores).
+const DONUT_SEPARACION = 4;
+
+function arcoDonut(color, largo, desde) {
+  const arco = document.createElementNS(SVG_NS, 'circle');
+  arco.setAttribute('cx', '60');
+  arco.setAttribute('cy', '60');
+  arco.setAttribute('r', String(DONUT_RADIO));
+  arco.setAttribute('fill', 'none');
+  arco.setAttribute('stroke', color);
+  arco.setAttribute('stroke-width', String(DONUT_GROSOR));
+  // Punta recta, no redondeada: en una porción chica (p. ej. 3%) las puntas
+  // redondeadas agregan medio grosor a cada lado y la hacen ver bastante más
+  // grande de lo que es. El tamaño del arco tiene que decir la verdad.
+  arco.setAttribute('stroke-linecap', 'butt');
+  arco.setAttribute('stroke-dasharray', `${largo} ${DONUT_PERIMETRO - largo}`);
+  arco.setAttribute('stroke-dashoffset', String(-desde));
+  return arco;
+}
+
+function pintarDonut(normal, juridica) {
+  const svg = document.getElementById('grafico-donut');
+  const total = normal + juridica;
+  svg.replaceChildren();
+
+  if (total === 0) {
+    svg.appendChild(arcoDonut('var(--donut-vacio)', DONUT_PERIMETRO, 0));
+    return;
+  }
+
+  const largoNormal = (normal / total) * DONUT_PERIMETRO;
+  const largoJuridica = (juridica / total) * DONUT_PERIMETRO;
+  // Con una sola categoría presente el anillo va entero, sin hueco.
+  const sep = normal > 0 && juridica > 0 ? DONUT_SEPARACION : 0;
+
+  if (normal > 0) {
+    svg.appendChild(arcoDonut('var(--serie-normal)', Math.max(largoNormal - sep, 2), 0));
+  }
+  if (juridica > 0) {
+    svg.appendChild(
+      arcoDonut('var(--serie-juridica)', Math.max(largoJuridica - sep, 2), largoNormal)
+    );
+  }
+}
+
 function mostrarDetalleMes(mesIndex, lista, { repintarFilas = true } = {}) {
   mesSeleccionadoEstadisticas = mesIndex;
 
   const juridica = lista.filter(esRevisionJuridica).length;
   const normal = lista.length - juridica;
+  const total = lista.length;
+  const porcentaje = (n) => (total > 0 ? `${Math.round((n / total) * 100)}%` : '—');
 
   document.getElementById('mes-juridica-nombre').textContent = MESES[mesIndex];
+  document.getElementById('donut-total').textContent = String(total);
   document.getElementById('conteo-normal').textContent = String(normal);
   document.getElementById('conteo-juridica').textContent = String(juridica);
+  document.getElementById('pct-normal').textContent = porcentaje(normal);
+  document.getElementById('pct-juridica').textContent = porcentaje(juridica);
 
-  const grafico = document.getElementById('grafico-circular');
-  if (lista.length === 0) {
-    grafico.style.background = 'var(--color-borde)';
-  } else {
-    const pctNormal = (normal / lista.length) * 100;
-    grafico.style.background =
-      `conic-gradient(var(--color-primario) 0% ${pctNormal}%, var(--estado-visita) ${pctNormal}% 100%)`;
-  }
+  pintarDonut(normal, juridica);
 
   document.getElementById('panel-mes-juridica').classList.remove('oculto');
 

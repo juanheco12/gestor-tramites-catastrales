@@ -635,7 +635,22 @@ tr.fila-mes { cursor: pointer; }
 tr.fila-mes:hover { background: var(--color-panel-alt); }
 tr.fila-mes-activa { background: var(--color-panel-alt); }
 
-.panel-mes-juridica { margin: 0 24px; flex-shrink: 0; }
+/* Series del desglose. Naranja/violeta: par validado (CVD ΔE 29.5 claro /
+   26.0 oscuro, ambos >= 3:1 sobre el panel) en vez de heredar los colores
+   de estado de la app, que no estaban pensados para convivir en un gráfico. */
+.panel-mes-juridica {
+  --serie-normal: #eb6834;
+  --serie-juridica: #4a3aa7;
+  --donut-vacio: var(--color-borde);
+  margin: 0 24px;
+  /* Alto según su contenido: .panel trae flex:1 para las tablas, que aquí
+     estiraría el panel hasta dejar un vacío enorme bajo el gráfico. */
+  flex: 0 0 auto;
+}
+[data-tema="oscuro"] .panel-mes-juridica {
+  --serie-normal: #d95926;
+  --serie-juridica: #9085e9;
+}
 
 .panel-mes-cabecera {
   display: flex;
@@ -647,24 +662,41 @@ tr.fila-mes-activa { background: var(--color-panel-alt); }
 .grafico-circular-cont {
   display: flex;
   align-items: center;
-  gap: 24px;
-  padding-top: 8px;
+  justify-content: center;
+  gap: 40px;
+  padding: 20px 0 8px;
+  flex-wrap: wrap;
 }
 
-.grafico-circular {
-  width: 120px;
-  height: 120px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: var(--color-borde);
+.donut-marco { position: relative; width: 168px; height: 168px; flex-shrink: 0; }
+
+/* -90deg: el primer segmento arranca arriba, no a las 3 en punto. */
+.donut { width: 100%; height: 100%; transform: rotate(-90deg); }
+
+.donut-centro {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  pointer-events: none;
 }
+.donut-total { font-size: 30px; font-weight: 600; line-height: 1; color: var(--color-texto); }
+.donut-sufijo { font-size: 12px; color: var(--color-texto-secundario); }
 
-.grafico-leyenda { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
-.grafico-leyenda li { display: flex; align-items: center; gap: 8px; }
+.grafico-leyenda { display: flex; flex-direction: column; gap: 14px; font-size: 13px; min-width: 210px; }
+.grafico-leyenda li { display: flex; align-items: center; gap: 10px; }
 
-.punto { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
-.punto-normal { background: var(--color-primario); }
-.punto-juridica { background: var(--estado-visita); }
+.leyenda-nombre { flex: 1; color: var(--color-texto-secundario); }
+.leyenda-valor { display: flex; align-items: baseline; gap: 6px; }
+.leyenda-valor strong { font-size: 16px; color: var(--color-texto); }
+.leyenda-pct { font-size: 12px; color: var(--color-texto-tenue); min-width: 38px; text-align: right; }
+
+.punto { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
+.punto-normal { background: var(--serie-normal); }
+.punto-juridica { background: var(--serie-juridica); }
 
 .enlace-radicado {
   color: var(--color-primario);

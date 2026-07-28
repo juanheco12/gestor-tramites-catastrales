@@ -201,12 +201,27 @@
         </button>
       </div>
       <div class="grafico-circular-cont">
-        <div id="grafico-circular" class="grafico-circular"></div>
+        <div class="donut-marco">
+          <svg id="grafico-donut" class="donut" viewBox="0 0 120 120" role="img" aria-labelledby="donut-titulo"></svg>
+          <div class="donut-centro">
+            <span id="donut-total" class="donut-total">0</span>
+            <span class="donut-sufijo">envíos</span>
+          </div>
+        </div>
         <ul class="grafico-leyenda">
-          <li><span class="punto punto-normal"></span> Revisión normal: <strong id="conteo-normal">0</strong></li>
-          <li><span class="punto punto-juridica"></span> Revisión jurídica: <strong id="conteo-juridica">0</strong></li>
+          <li>
+            <span class="punto punto-normal"></span>
+            <span class="leyenda-nombre">Revisión normal</span>
+            <span class="leyenda-valor"><strong id="conteo-normal">0</strong><span id="pct-normal" class="leyenda-pct"></span></span>
+          </li>
+          <li>
+            <span class="punto punto-juridica"></span>
+            <span class="leyenda-nombre">Revisión jurídica</span>
+            <span class="leyenda-valor"><strong id="conteo-juridica">0</strong><span id="pct-juridica" class="leyenda-pct"></span></span>
+          </li>
         </ul>
       </div>
+      <p id="donut-titulo" class="oculto">Desglose de envíos del mes entre revisión normal y revisión jurídica</p>
     </section>
     <main>
       <section class="panel">
