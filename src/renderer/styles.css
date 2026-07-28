@@ -628,6 +628,44 @@ td.celda-obs {
 td.celda-obs:hover { background: var(--color-panel-alt); }
 td.celda-obs .obs-vacia { color: var(--color-texto-tenue); font-style: italic; }
 
+/* ============================================================
+   ESTADÍSTICAS: panel jurídica/normal por mes
+   ============================================================ */
+tr.fila-mes { cursor: pointer; }
+tr.fila-mes:hover { background: var(--color-panel-alt); }
+tr.fila-mes-activa { background: var(--color-panel-alt); }
+
+.panel-mes-juridica { margin: 0 24px; flex-shrink: 0; }
+
+.panel-mes-cabecera {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.panel-mes-cabecera h2 { margin-bottom: 0; }
+
+.grafico-circular-cont {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding-top: 8px;
+}
+
+.grafico-circular {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--color-borde);
+}
+
+.grafico-leyenda { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.grafico-leyenda li { display: flex; align-items: center; gap: 8px; }
+
+.punto { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.punto-normal { background: var(--color-primario); }
+.punto-juridica { background: var(--estado-visita); }
+
 .enlace-radicado {
   color: var(--color-primario);
   font-weight: 600;

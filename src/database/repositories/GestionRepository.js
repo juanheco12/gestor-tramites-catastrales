@@ -22,6 +22,14 @@ const ESTADOS_VALIDOS = ['por_estudiar', 'estudiado', 'visita', 'enviado', 'devu
  */
 const PALABRAS_ENVIADO = ['EJECUTADO', 'TRAMITADO', 'EN REVISION'];
 
+/** Quita tildes y pasa a mayúsculas, para comparar texto sin depender del acento exacto. */
+function normalizar(texto) {
+  return String(texto || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toUpperCase();
+}
+
 /**
  * Acceso a los campos de gestión PROPIOS del ejecutor (tramites_gestion).
  * El robot de sincronización nunca pisa estos datos; solo automatiza dos
@@ -59,77 +67,101 @@ class GestionRepository {
       throw new Error(`Estado de gestión inválido: ${estado}`);
     }
 
-    this.asegurar(tramiteId);
-    const sets = aActualizar.map(([campo]) => `${campo} = @${campo}`);
-    sets.push("actualizado_en = datetime('now', 'localtime')");
+    // Todo en una transacción: si más abajo se bloquea el guardado (falta
+    // el análisis de un caso jurídico), no debe quedar nada a medias.
+    const aplicar = this.db.transaction(() => {
+      this.asegurar(tramiteId);
+      const sets = aActualizar.map(([campo]) => `${campo} = @${campo}`);
+      sets.push("actualizado_en = datetime('now', 'localtime')");
 
-    this.db
-      .prepare(`UPDATE tramites_gestion SET ${sets.join(', ')} WHERE tramite_id = @tramite_id`)
-      .run({ tramite_id: tramiteId, ...Object.fromEntries(aActualizar) });
+      this.db
+        .prepare(`UPDATE tramites_gestion SET ${sets.join(', ')} WHERE tramite_id = @tramite_id`)
+        .run({ tramite_id: tramiteId, ...Object.fromEntries(aActualizar) });
 
-    // Autocompletado de "enviado": si el usuario escribe a mano un estado
-    // de seguimiento que indica que el trámite ya se envió a revisión
-    // (mismo criterio que el importador de Excel) y todavía no tiene fecha
-    // de envío, se completa con hoy — igual que ya hace el robot de
-    // sincronización cuando el trámite desaparece de la bandeja, pero para
-    // cuando el propio usuario lo escribe a mano en la ficha o al agregar
-    // un trámite al histórico.
-    let marcadoEnviadoAutomatico = false;
-    if (campos.estado_seguimiento !== undefined) {
-      const actual = this.db
-        .prepare('SELECT fecha_envio FROM tramites_gestion WHERE tramite_id = ?')
-        .get(tramiteId);
-      const pareceEnviado = PALABRAS_ENVIADO.some((p) =>
-        campos.estado_seguimiento.toUpperCase().includes(p)
-      );
-      if (pareceEnviado && !actual.fecha_envio) {
-        const setsAuto = [
-          "fecha_envio = date('now', 'localtime')",
-          "fecha_realizacion = COALESCE(fecha_realizacion, date('now', 'localtime'))",
-        ];
-        if (campos.mi_estado === undefined) setsAuto.push("mi_estado = 'enviado'");
-        this.db
+      // Autocompletado al enviar a revisión: si el usuario escribe a mano
+      // un estado de seguimiento que indica que el trámite ya se envió
+      // (mismo criterio que el importador de Excel) y todavía no tiene
+      // fecha de envío, se completa con hoy. A partir de ahí se distingue:
+      //  - Revisión NORMAL: observación y análisis pasan solos a "OK".
+      //  - Revisión JURÍDICA (la palabra "jurídica" en observación, estado
+      //    de seguimiento o análisis): el análisis NUNCA se autocompleta
+      //    con "OK" —ahí va la justificación real— y si quedó vacío se
+      //    bloquea el guardado en vez de dejarlo pasar sin ella.
+      let marcadoEnviadoAutomatico = false;
+      if (campos.estado_seguimiento !== undefined) {
+        const actual = this.db
           .prepare(
-            `UPDATE tramites_gestion SET ${setsAuto.join(', ')}, actualizado_en = datetime('now', 'localtime') WHERE tramite_id = ?`
+            'SELECT fecha_envio, observacion, estado_seguimiento, analisis FROM tramites_gestion WHERE tramite_id = ?'
           )
-          .run(tramiteId);
-        marcadoEnviadoAutomatico = true;
+          .get(tramiteId);
+        const pareceEnviado = PALABRAS_ENVIADO.some((p) =>
+          campos.estado_seguimiento.toUpperCase().includes(p)
+        );
+        if (pareceEnviado && !actual.fecha_envio) {
+          const textoCompleto = normalizar(
+            `${actual.observacion || ''} ${actual.estado_seguimiento || ''} ${actual.analisis || ''}`
+          );
+          const esJuridica = textoCompleto.includes('JURIDIC');
+
+          if (esJuridica && !(actual.analisis || '').trim()) {
+            throw new Error(
+              'Este trámite es de revisión jurídica: escriba el análisis (la justificación) antes de guardar.'
+            );
+          }
+
+          const setsAuto = [
+            "fecha_envio = date('now', 'localtime')",
+            "fecha_realizacion = COALESCE(fecha_realizacion, date('now', 'localtime'))",
+          ];
+          if (!esJuridica) {
+            setsAuto.push("observacion = 'OK'", "analisis = 'OK'");
+          }
+          if (campos.mi_estado === undefined) setsAuto.push("mi_estado = 'enviado'");
+          this.db
+            .prepare(
+              `UPDATE tramites_gestion SET ${setsAuto.join(', ')}, actualizado_en = datetime('now', 'localtime') WHERE tramite_id = ?`
+            )
+            .run(tramiteId);
+          marcadoEnviadoAutomatico = true;
+        }
       }
-    }
 
-    // Reglas del flujo del ejecutor (solo si él no fijó el estado a mano):
-    //  - prioridad VISITA, O la observación menciona "visita" (aunque no
-    //    exista columna de prioridad) => estado "visita".
-    //  - trámite sin estudiar que ya tiene observación => "estudiado".
-    // Se leen los valores YA GUARDADOS (tras el UPDATE de arriba) para que
-    // la regla aplique sin importar cuál campo se haya editado en esta llamada.
-    //
-    // IMPORTANTE: "Estudiado"/"Visita" son solo estado interno de trabajo
-    // sobre la BANDEJA; NO implican fecha_realizacion ni que el trámite
-    // deba aparecer en el Histórico. Esa fecha la pone el usuario a mano
-    // (en la ficha o con "Agregar trámite"), igual que en su bitácora Excel:
-    // "Histórico" ≠ "todo lo que está en la bandeja".
-    if (campos.mi_estado === undefined && !marcadoEnviadoAutomatico) {
-      const actual = this.db
-        .prepare('SELECT mi_estado, prioridad, observacion FROM tramites_gestion WHERE tramite_id = ?')
-        .get(tramiteId);
+      // Reglas del flujo del ejecutor (solo si él no fijó el estado a mano):
+      //  - prioridad VISITA, O la observación menciona "visita" (aunque no
+      //    exista columna de prioridad) => estado "visita".
+      //  - trámite sin estudiar que ya tiene observación => "estudiado".
+      // Se leen los valores YA GUARDADOS (tras el UPDATE de arriba) para que
+      // la regla aplique sin importar cuál campo se haya editado en esta llamada.
+      //
+      // IMPORTANTE: "Estudiado"/"Visita" son solo estado interno de trabajo
+      // sobre la BANDEJA; NO implican fecha_realizacion ni que el trámite
+      // deba aparecer en el Histórico. Esa fecha la pone el usuario a mano
+      // (en la ficha o con "Agregar trámite"), igual que en su bitácora Excel:
+      // "Histórico" ≠ "todo lo que está en la bandeja".
+      if (campos.mi_estado === undefined && !marcadoEnviadoAutomatico) {
+        const actual = this.db
+          .prepare('SELECT mi_estado, prioridad, observacion FROM tramites_gestion WHERE tramite_id = ?')
+          .get(tramiteId);
 
-      const esVisita = /VISITA/i.test(actual.prioridad || '') || /VISITA/i.test(actual.observacion || '');
-      const yaEstadoFinal = ['visita', 'finalizado'].includes(actual.mi_estado);
+        const esVisita = /VISITA/i.test(actual.prioridad || '') || /VISITA/i.test(actual.observacion || '');
+        const yaEstadoFinal = ['visita', 'finalizado'].includes(actual.mi_estado);
 
-      let derivado = null;
-      if (esVisita && !yaEstadoFinal) {
-        derivado = 'visita';
-      } else if (actual.mi_estado === 'por_estudiar' && (actual.observacion || '').trim() !== '') {
-        derivado = 'estudiado';
+        let derivado = null;
+        if (esVisita && !yaEstadoFinal) {
+          derivado = 'visita';
+        } else if (actual.mi_estado === 'por_estudiar' && (actual.observacion || '').trim() !== '') {
+          derivado = 'estudiado';
+        }
+
+        if (derivado) {
+          this.db
+            .prepare("UPDATE tramites_gestion SET mi_estado = ?, actualizado_en = datetime('now', 'localtime') WHERE tramite_id = ?")
+            .run(derivado, tramiteId);
+        }
       }
+    });
 
-      if (derivado) {
-        this.db
-          .prepare("UPDATE tramites_gestion SET mi_estado = ?, actualizado_en = datetime('now', 'localtime') WHERE tramite_id = ?")
-          .run(derivado, tramiteId);
-      }
-    }
+    aplicar();
   }
 
   /**

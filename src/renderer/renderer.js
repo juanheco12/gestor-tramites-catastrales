@@ -89,6 +89,19 @@ function celda(contenido, clase) {
   return td;
 }
 
+/** Quita tildes y pasa a mayúsculas (mismo criterio que usa la base de datos para detectar "jurídica"). */
+function normalizarTexto(texto) {
+  return String(texto || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toUpperCase();
+}
+
+/** Un trámite es de revisión jurídica si la palabra aparece en observación, estado de seguimiento o análisis. */
+function esRevisionJuridica(t) {
+  return normalizarTexto(`${t.observacion || ''} ${t.estado_seguimiento || ''} ${t.analisis || ''}`).includes('JURIDIC');
+}
+
 /**
  * Ordenamiento por columna (clic en el encabezado). Cada ejecutor tiene su
  * propia lógica de trabajo (uno por fecha de realización, otro por
@@ -483,6 +496,8 @@ function pintarChipsAnioEstadisticas() {
   anios.forEach((a) => crear(a, a));
 }
 
+let mesSeleccionadoEstadisticas = null;
+
 function pintarEstadisticas() {
   const conFechaEnvio = tramites.filter((t) => t.fecha_envio);
   const enviados = conFechaEnvio.filter((t) => anioEnvioDe(t) !== null);
@@ -502,22 +517,73 @@ function pintarEstadisticas() {
     avisoEl.classList.add('oculto');
   }
 
-  const porMes = new Array(12).fill(0);
+  // El conteo general (tarjetas y acumulado) siempre suma todo junto; el
+  // desglose jurídica/normal solo se calcula para el mes que se abre con
+  // el gráfico circular, no para el total del año.
+  const porMes = Array.from({ length: 12 }, () => []);
   for (const t of delAnio) {
     const mes = mesEnvioDe(t);
-    if (mes !== null) porMes[mes] += 1;
+    if (mes !== null) porMes[mes].push(t);
   }
 
   let acumulado = 0;
   cuerpoEstadisticas.replaceChildren(
-    ...porMes.map((cantidad, i) => {
-      acumulado += cantidad;
+    ...porMes.map((lista, i) => {
+      acumulado += lista.length;
       const fila = document.createElement('tr');
-      fila.append(celda(MESES[i]), celda(cantidad), celda(acumulado));
+      fila.className = 'fila-mes';
+      if (mesSeleccionadoEstadisticas === i) fila.classList.add('fila-mes-activa');
+      fila.append(celda(MESES[i]), celda(lista.length), celda(acumulado));
+      fila.addEventListener('click', () => mostrarDetalleMes(i, lista));
       return fila;
     })
   );
+
+  // Si el mes que estaba abierto sigue teniendo datos, se refresca (p. ej.
+  // tras sincronizar); si ya no tiene ninguno, se cierra el panel para no
+  // dejar un detalle desactualizado en pantalla.
+  if (mesSeleccionadoEstadisticas !== null) {
+    const lista = porMes[mesSeleccionadoEstadisticas];
+    if (lista.length > 0) mostrarDetalleMes(mesSeleccionadoEstadisticas, lista, { repintarFilas: false });
+    else cerrarDetalleMes();
+  }
 }
+
+/** Gráfico circular jurídica/normal de un mes puntual (clic en su fila). */
+function mostrarDetalleMes(mesIndex, lista, { repintarFilas = true } = {}) {
+  mesSeleccionadoEstadisticas = mesIndex;
+
+  const juridica = lista.filter(esRevisionJuridica).length;
+  const normal = lista.length - juridica;
+
+  document.getElementById('mes-juridica-nombre').textContent = MESES[mesIndex];
+  document.getElementById('conteo-normal').textContent = String(normal);
+  document.getElementById('conteo-juridica').textContent = String(juridica);
+
+  const grafico = document.getElementById('grafico-circular');
+  if (lista.length === 0) {
+    grafico.style.background = 'var(--color-borde)';
+  } else {
+    const pctNormal = (normal / lista.length) * 100;
+    grafico.style.background =
+      `conic-gradient(var(--color-primario) 0% ${pctNormal}%, var(--estado-visita) ${pctNormal}% 100%)`;
+  }
+
+  document.getElementById('panel-mes-juridica').classList.remove('oculto');
+
+  if (repintarFilas) {
+    document.querySelectorAll('#tabla-estadisticas tbody tr').forEach((tr, i) => {
+      tr.classList.toggle('fila-mes-activa', i === mesIndex);
+    });
+  }
+}
+
+function cerrarDetalleMes() {
+  mesSeleccionadoEstadisticas = null;
+  document.getElementById('panel-mes-juridica').classList.add('oculto');
+}
+
+document.getElementById('cerrar-mes-juridica').addEventListener('click', cerrarDetalleMes);
 
 /* ------------------------- ficha del trámite ------------------------- */
 
