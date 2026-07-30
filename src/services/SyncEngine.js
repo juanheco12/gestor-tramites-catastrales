@@ -11,6 +11,12 @@
  *
  * Todo el lote se aplica en UNA transacción: o se persiste la sincronización
  * completa o la base de datos queda intacta.
+ *
+ * Marcar "enviado" a lo que sale de la bandeja NO ocurre acá: requiere
+ * decidir qué fecha usar (hoy, o la real si hubo una brecha larga sin
+ * sincronizar), lo que a veces implica consultar la web — algo que no cabe
+ * dentro de esta transacción síncrona. Esa decisión la toma quien orquesta
+ * la sincronización (BandejaSyncService), usando `resumen.ausentes`.
  */
 class SyncEngine {
   /**
@@ -38,6 +44,7 @@ class SyncEngine {
         actualizados: 0,
         sinCambios: 0,
         marcadosAusentes: 0,
+        ausentes: [],
         devueltos: 0,
         detalleCambios: [],
       };
@@ -78,14 +85,14 @@ class SyncEngine {
         }
       }
 
-      const idsAusentes = this.tramites.marcarAusentes(lote.map((t) => t.numero_tramite));
-      resumen.marcadosAusentes = idsAusentes.length;
-
-      // Automatismo de bitácora: lo que sale de la bandeja pasa a "enviado"
-      // con fecha de envío de hoy (salvo estados finales puestos por el usuario).
-      if (this.gestion && idsAusentes.length > 0) {
-        this.gestion.marcarEnviados(idsAusentes);
-      }
+      const ausentes = this.tramites.marcarAusentes(lote.map((t) => t.numero_tramite));
+      resumen.marcadosAusentes = ausentes.length;
+      // Se guarda con numero_tramite (no solo el id) para que quien orquesta
+      // la sincronización pueda, si hace falta, consultar en la web la
+      // fecha REAL de envío de cada uno antes de marcarlos "enviado" (ver
+      // BandejaSyncService): asumir "hoy" es correcto casi siempre, pero no
+      // cuando pasó una brecha larga sin sincronizar.
+      resumen.ausentes = ausentes;
 
       // Devueltos: filas en rojo en la cuadrícula, o trámites enviados que
       // reaparecieron en la bandeja.

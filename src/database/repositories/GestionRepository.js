@@ -215,22 +215,38 @@ class GestionRepository {
    * @param {number[]} tramiteIds
    * @returns {number} filas afectadas
    */
-  marcarEnviados(tramiteIds) {
+  /**
+   * @param {number[]} tramiteIds
+   * @param {Record<number,string>} [fechasPorId] id -> fecha ISO (AAAA-MM-DD)
+   *   real de envío, cuando se pudo consultar en la web (ver
+   *   ConsultaTramiteService). Los ids sin entrada usan la fecha de hoy,
+   *   como antes.
+   */
+  marcarEnviados(tramiteIds, fechasPorId = {}) {
     if (tramiteIds.length === 0) return 0;
-    return this.db
-      .prepare(`
-        UPDATE tramites_gestion
-        SET mi_estado = 'enviado',
-            fecha_realizacion = COALESCE(fecha_realizacion, date('now', 'localtime')),
-            fecha_envio = COALESCE(fecha_envio, date('now', 'localtime')),
-            observacion = 'OK',
-            analisis = COALESCE(NULLIF(analisis, ''), 'OK'),
-            estado_seguimiento = 'EN REVISION',
-            actualizado_en = datetime('now', 'localtime')
-        WHERE mi_estado NOT IN ('enviado', 'finalizado')
-          AND tramite_id IN (SELECT value FROM json_each(?))
-      `)
-      .run(JSON.stringify(tramiteIds)).changes;
+    const aplicar = this.db.transaction((ids) => {
+      let cambiados = 0;
+      for (const id of ids) {
+        const fecha = fechasPorId[id] || null;
+        const r = this.db
+          .prepare(`
+            UPDATE tramites_gestion
+            SET mi_estado = 'enviado',
+                fecha_realizacion = COALESCE(fecha_realizacion, COALESCE(@fecha, date('now', 'localtime'))),
+                fecha_envio = COALESCE(fecha_envio, COALESCE(@fecha, date('now', 'localtime'))),
+                observacion = 'OK',
+                analisis = COALESCE(NULLIF(analisis, ''), 'OK'),
+                estado_seguimiento = 'EN REVISION',
+                actualizado_en = datetime('now', 'localtime')
+            WHERE mi_estado NOT IN ('enviado', 'finalizado')
+              AND tramite_id = @id
+          `)
+          .run({ id, fecha });
+        cambiados += r.changes;
+      }
+      return cambiados;
+    });
+    return aplicar(tramiteIds);
   }
 
   /** Fila de gestión cruda de un trámite (o undefined si no existe). */

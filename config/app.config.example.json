@@ -1,5 +1,5 @@
 {
-  "configVersion": 5,
+  "configVersion": 6,
   "app": {
     "dbPath": "data/bandeja.db",
     "logsDir": "logs",
@@ -65,5 +65,8 @@
     "backoffBaseMs": 2000,
     "backoffFactor": 2,
     "autoCadaMinutos": 10
+  },
+  "consultaTramite": {
+    "url": "https://catastromonteria.com.co/consultatramiteND.aspx"
   }
 }

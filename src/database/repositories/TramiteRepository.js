@@ -36,7 +36,7 @@ class TramiteRepository {
     `);
 
     this.stmtSeleccionarAusentes = this.db.prepare(`
-      SELECT id FROM tramites
+      SELECT id, numero_tramite FROM tramites
       WHERE presente_en_bandeja = 1
         AND numero_tramite NOT IN (SELECT value FROM json_each(?))
     `);
@@ -137,16 +137,16 @@ class TramiteRepository {
    * Marca como ausentes (presente_en_bandeja = 0) los trámites que ya no
    * aparecen en la bandeja. Nunca elimina registros.
    * @param {string[]} numerosVistos Números de trámite presentes en esta sincronización
-   * @returns {number[]} ids de los trámites que acaban de salir de la bandeja
+   * @returns {Array<{id: number, numero_tramite: string}>} trámites que acaban de salir de la bandeja
    */
   marcarAusentes(numerosVistos) {
     if (numerosVistos.length === 0) return [];
     const vistosJson = JSON.stringify(numerosVistos);
-    const ids = this.stmtSeleccionarAusentes.all(vistosJson).map((f) => f.id);
-    if (ids.length > 0) {
-      this.stmtMarcarAusentes.run(JSON.stringify(ids));
+    const ausentes = this.stmtSeleccionarAusentes.all(vistosJson);
+    if (ausentes.length > 0) {
+      this.stmtMarcarAusentes.run(JSON.stringify(ausentes.map((f) => f.id)));
     }
-    return ids;
+    return ausentes;
   }
 
   /** Listado para la UI, más recientes primero. */

@@ -55,6 +55,20 @@ class SyncLogRepository {
       .prepare('SELECT * FROM sync_logs ORDER BY id DESC LIMIT ?')
       .all(limite);
   }
+
+  /**
+   * Fecha (texto local "AAAA-MM-DD HH:MM:SS") de la última sincronización
+   * que sí llegó a leer la bandeja (exitosa o parcial), o null si nunca hubo
+   * una. Sirve para detectar una brecha larga sin sincronizar: si pasó
+   * mucho tiempo desde la última, lo que recién desapareció de la bandeja
+   * pudo haberse enviado cualquier día de esa brecha, no justo hoy.
+   */
+  ultimaCompletada() {
+    const fila = this.db
+      .prepare("SELECT fecha_fin FROM sync_logs WHERE estado IN ('exitoso', 'parcial') ORDER BY id DESC LIMIT 1")
+      .get();
+    return fila ? fila.fecha_fin : null;
+  }
 }
 
 module.exports = { SyncLogRepository };
