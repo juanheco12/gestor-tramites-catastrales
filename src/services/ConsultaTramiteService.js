@@ -287,9 +287,24 @@ class ConsultaTramiteService {
       // edis muestra un aviso propio ("Digite el año y el número de
       // radicación") cuando la búsqueda le llega incompleta. Si aparece, se
       // cierra: dejarlo abierto bloquearía todas las consultas siguientes.
+      // edis contesta con un cartel propio. "TRÁMITE NO ENCONTRADO" es una
+      // respuesta NORMAL (ese número todavía no se radicó) y así hay que
+      // tratarla: tomarla como falla cortaba el recorrido a los 3 seguidos,
+      // justo al llegar al final de la numeración, que es lo esperable.
       const aviso = await this._descartarAviso(page);
-      if (aviso) {
-        this.ultimoProblema = `edis respondió: ${aviso}`;
+      if (aviso.tipo === 'no-encontrado') {
+        return {
+          existe: false,
+          fechaRadicacion: '',
+          usuarioRadica: '',
+          clase: '',
+          npn: '',
+          interesado: '',
+          fechaEnvioRevision: '',
+        };
+      }
+      if (aviso.tipo === 'error') {
+        this.ultimoProblema = `edis respondió: ${aviso.texto}`;
         this.logger.warn(`Consulta ${partes.anio}-${partes.numero}: ${this.ultimoProblema}`);
         return null;
       }
@@ -347,23 +362,41 @@ class ConsultaTramiteService {
   }
 
   /**
-   * Cierra el aviso emergente de edis si está en pantalla.
-   * @returns {Promise<string>} el texto del aviso, o '' si no había ninguno
+   * Cierra el cartel emergente de edis si está en pantalla y lo clasifica.
+   *
+   * Distinguir el tipo es lo importante: "TRÁMITE NO ENCONTRADO" significa
+   * simplemente que ese número todavía no existe (respuesta normal al llegar
+   * al final de la numeración), mientras que "Digite el año y el número" sí
+   * es una falla del robot que hay que corregir.
+   *
+   * @returns {Promise<{tipo: ''|'no-encontrado'|'error', texto: string}>}
    */
   async _descartarAviso(page) {
+    const sinAviso = { tipo: '', texto: '' };
     try {
       const boton = page.locator("button:has-text('Aceptar'), input[value='Aceptar']").first();
-      if (!(await boton.isVisible({ timeout: 800 }).catch(() => false))) return '';
+      if (!(await boton.isVisible({ timeout: 800 }).catch(() => false))) return sinAviso;
+
       const texto = await page
         .evaluate(() => {
-          const m = document.body.innerText.match(/ERROR[^\n]*/i);
-          return m ? m[0].trim() : 'aviso sin texto reconocible';
+          const normalizar = (t) =>
+            (t || '')
+              .normalize('NFD')
+              .replace(/[̀-ͯ]/g, '')
+              .toUpperCase()
+              .replace(/\s+/g, ' ');
+          const cuerpo = normalizar(document.body.innerText);
+          const m = cuerpo.match(/[^\n]*(NO ENCONTRAD|ERROR|DIGITE)[^\n]*/);
+          return m ? m[0].trim() : '';
         })
-        .catch(() => 'aviso');
+        .catch(() => '');
+
       await boton.click({ timeout: 3000 }).catch(() => {});
-      return texto;
+
+      if (/NO ENCONTRAD/.test(texto)) return { tipo: 'no-encontrado', texto };
+      return { tipo: 'error', texto: texto || 'aviso sin texto reconocible' };
     } catch {
-      return '';
+      return sinAviso;
     }
   }
 

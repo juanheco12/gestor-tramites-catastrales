@@ -341,15 +341,15 @@ function registrarIpc(contenedor, obtenerVentana) {
         throw new Error('El radicado de inicio debe tener la forma AÑO-NÚMERO, por ejemplo 2026-7272.');
       }
 
-      const desdeAnterior = radicacionRepository.desde();
       radicacionRepository.guardarEstado('radicaciones.usuario', nombre);
       radicacionRepository.guardarEstado('radicaciones.desde', inicio);
       radicacionRepository.activar(activo);
 
-      // Cambiar el punto de arranque solo sirve si se vuelve a recorrer desde
-      // ahí: si no, el recorrido seguiría desde donde había quedado y el
-      // cambio no tendría ningún efecto visible.
-      if (inicio && inicio !== desdeAnterior) {
+      // Guardar con un radicado de inicio significa "volvé a recorrer desde
+      // ahí", siempre. Antes solo se reiniciaba si el valor cambiaba, así que
+      // si el recorrido ya se había pasado de largo no había forma de
+      // volverlo atrás: se guardaba y no pasaba nada.
+      if (inicio) {
         const anio = inicio.split('-')[0];
         radicacionRepository.guardarEstado(`radicaciones.ultimoExplorado.${anio}`, '');
       }
