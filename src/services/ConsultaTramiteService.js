@@ -36,7 +36,10 @@ function UBICAR_FORMULARIO() {
     for (const hijo of nodo.children) {
       const tag = hijo.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
-        items.push({ campo: true, el: hijo, tipo: (hijo.getAttribute('type') || 'text').toLowerCase() });
+        // Se guarda el tag aparte: un <select> no tiene atributo "type", y
+        // tomarlo como campo de texto hacía que AÑO/NÚMERO cayeran sobre los
+        // desplegables de departamento y municipio.
+        items.push({ campo: true, el: hijo, tag, tipo: (hijo.getAttribute('type') || 'text').toLowerCase() });
         continue;
       }
       const propio = Array.from(hijo.childNodes)
@@ -54,11 +57,13 @@ function UBICAR_FORMULARIO() {
     .querySelectorAll('[data-robot-campo]')
     .forEach((el) => el.removeAttribute('data-robot-campo'));
 
+  const esCasillaTexto = (it) =>
+    it.campo && it.tag === 'INPUT' && (it.tipo === 'text' || it.tipo === 'number');
+
   // Primer campo escribible que aparece después de la etiqueta.
   const campoTras = (desde) => {
     for (let j = desde + 1; j < items.length && j <= desde + 4; j++) {
-      const it = items[j];
-      if (it.campo && (it.tipo === 'text' || it.tipo === 'number')) return it.el;
+      if (esCasillaTexto(items[j])) return items[j].el;
     }
     return null;
   };
@@ -66,15 +71,31 @@ function UBICAR_FORMULARIO() {
   let anio = null;
   let numero = null;
   let indiceNumero = -1;
+  let estrategia = 'etiquetas';
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     if (it.campo) continue;
     // La etiqueta "AÑO" pierde la tilde de la Ñ al normalizar: queda "ANO".
-    if (!anio && it.texto === 'ANO') anio = campoTras(i);
-    if (!numero && it.texto === 'NUMERO') {
+    // Se acepta que la celda traiga algo más ("AÑO DE RADICACIÓN").
+    const esAnio = it.texto === 'ANO' || it.texto.startsWith('ANO ');
+    const esNumero = it.texto === 'NUMERO' || it.texto.startsWith('NUMERO ');
+    if (!anio && esAnio) anio = campoTras(i);
+    if (!numero && esNumero) {
       numero = campoTras(i);
       indiceNumero = i;
     }
+  }
+
+  // Plan B: si las etiquetas no aparecen como se espera, se usan los dos
+  // primeros campos de texto VISIBLES de la página. En esta pantalla son
+  // justamente AÑO y NÚMERO (departamento y municipio son desplegables, y
+  // los campos de la ficha vienen después).
+  const visiblesTexto = items.filter((i) => esCasillaTexto(i) && i.el.offsetParent !== null);
+  if ((!anio || !numero) && visiblesTexto.length >= 2) {
+    estrategia = 'posicion';
+    anio = visiblesTexto[0].el;
+    numero = visiblesTexto[1].el;
+    indiceNumero = items.indexOf(visiblesTexto[1]);
   }
 
   // La lupa es el primer botón-imagen que aparece tras la caja de búsqueda.
@@ -88,7 +109,11 @@ function UBICAR_FORMULARIO() {
       }
     }
   }
-  if (!buscar) buscar = document.querySelector("input[type='image']");
+  if (!buscar) {
+    buscar = Array.from(document.querySelectorAll("input[type='image']")).find(
+      (el) => el.offsetParent !== null
+    );
+  }
 
   if (anio) anio.setAttribute('data-robot-campo', 'anio');
   if (numero) numero.setAttribute('data-robot-campo', 'numero');
@@ -98,7 +123,9 @@ function UBICAR_FORMULARIO() {
     anio: Boolean(anio),
     numero: Boolean(numero),
     buscar: Boolean(buscar),
-    // Distintos: si algo falla, dice qué etiquetas había en pantalla.
+    estrategia,
+    camposTextoVisibles: visiblesTexto.length,
+    // Distintas: si algo falla, dice qué etiquetas había en pantalla.
     etiquetas: [...new Set(items.filter((i) => !i.campo).map((i) => i.texto))].slice(0, 40),
   };
 }
@@ -192,6 +219,9 @@ class ConsultaTramiteService {
     this.config = config;
     this.logger = logger;
     this.diagnosticoDado = false;
+    // Motivo del último fallo, para poder mostrarlo en pantalla en vez de
+    // obligar a ir a buscarlo al archivo de log.
+    this.ultimoProblema = '';
   }
 
   /**
@@ -221,9 +251,12 @@ class ConsultaTramiteService {
       // número de radicación". Se marcan los elementos y luego se llenan.
       const ubicados = await page.evaluate(UBICAR_FORMULARIO);
       if (!ubicados.anio || !ubicados.numero || !ubicados.buscar) {
+        this.ultimoProblema =
+          `No se ubicó el formulario de búsqueda (año=${ubicados.anio}, ` +
+          `número=${ubicados.numero}, lupa=${ubicados.buscar}, ` +
+          `campos de texto visibles=${ubicados.camposTextoVisibles}).`;
         this.logger.warn(
-          `Consulta ${partes.anio}-${partes.numero}: no se ubicó el formulario ` +
-          `(anio=${ubicados.anio} numero=${ubicados.numero} lupa=${ubicados.buscar}). ` +
+          `Consulta ${partes.anio}-${partes.numero}: ${this.ultimoProblema} ` +
           `Etiquetas: ${(ubicados.etiquetas || []).join(' / ')}`
         );
         return null;
@@ -242,10 +275,9 @@ class ConsultaTramiteService {
         numero: await campoNumero.inputValue(),
       };
       if (puestos.anio !== partes.anio || puestos.numero !== partes.numero) {
-        this.logger.warn(
-          `Consulta ${partes.anio}-${partes.numero}: los datos no quedaron en su campo ` +
-          `(AÑO="${puestos.anio}", NÚMERO="${puestos.numero}"). No se busca.`
-        );
+        this.ultimoProblema =
+          `Los datos no quedaron en su campo (AÑO="${puestos.anio}", NÚMERO="${puestos.numero}").`;
+        this.logger.warn(`Consulta ${partes.anio}-${partes.numero}: ${this.ultimoProblema} No se busca.`);
         return null;
       }
 
@@ -257,7 +289,8 @@ class ConsultaTramiteService {
       // cierra: dejarlo abierto bloquearía todas las consultas siguientes.
       const aviso = await this._descartarAviso(page);
       if (aviso) {
-        this.logger.warn(`Consulta ${partes.anio}-${partes.numero}: edis respondió "${aviso}".`);
+        this.ultimoProblema = `edis respondió: ${aviso}`;
+        this.logger.warn(`Consulta ${partes.anio}-${partes.numero}: ${this.ultimoProblema}`);
         return null;
       }
 
@@ -295,8 +328,9 @@ class ConsultaTramiteService {
         fechaEnvioRevision: this._fecha(datos.fechaEnvioRevision),
       };
     } catch (error) {
+      this.ultimoProblema = error.message.split('\n')[0];
       this.logger.warn(
-        `No se pudo consultar el trámite ${partes.anio}-${partes.numero}: ${error.message.split('\n')[0]}`
+        `No se pudo consultar el trámite ${partes.anio}-${partes.numero}: ${this.ultimoProblema}`
       );
       return null;
     }

@@ -96,8 +96,9 @@ class RadicacionesService {
       }
     }
 
-    nuevas += await this._recorrerHaciaArriba(page, anio, ultimo, usuario, contador);
-    return { nuevas, consultas: contador.consultas, usuario };
+    const recorrido = await this._recorrerHaciaArriba(page, anio, ultimo, usuario, contador);
+    nuevas += recorrido.nuevas;
+    return { nuevas, consultas: contador.consultas, usuario, corte: recorrido.corte };
   }
 
   /** Número de arranque configurado por el usuario ("2026-7272" -> 7272), si es de este año. */
@@ -115,6 +116,11 @@ class RadicacionesService {
       return 'No se pudo ubicar el último radicado de la oficina. Indique en Mi perfil un radicado suyo desde el cual empezar.';
     }
     if (r.nuevas > 0) return `${r.nuevas} radicación(es) nuevas detectadas (${r.consultas} consultas).`;
+    // Si el recorrido se cortó por fallas al consultar, decirlo: antes esto
+    // se veía igual que "revisé y no había nada suyo", que es muy distinto.
+    if (r.corte === 'errores') {
+      return `No se pudo leer la consulta de trámites: ${this.consulta.ultimoProblema || 'motivo desconocido'}`;
+    }
     return `Sin radicaciones nuevas a nombre de "${r.usuario}" (${r.consultas} consultas revisadas).`;
   }
 
@@ -195,6 +201,7 @@ class RadicacionesService {
     // de saltárselo para siempre.
     let ultimoConfirmado = ultimoExplorado;
     let erroresSeguidos = 0;
+    let corte = null;
 
     while (huecosSeguidos < TOLERANCIA_HUECOS && contador.consultas < MAX_CONSULTAS_POR_CORRIDA) {
       const datos = await this._consultar(page, anio, numero, contador);
@@ -205,6 +212,7 @@ class RadicacionesService {
         erroresSeguidos++;
         if (erroresSeguidos >= 3) {
           this.logger.warn(`Radicaciones: 3 errores seguidos en ${anio}-${numero}; se corta el recorrido.`);
+          corte = 'errores';
           break;
         }
         continue;
@@ -231,7 +239,7 @@ class RadicacionesService {
     if (ultimoConfirmado > ultimoExplorado) {
       this.repo.guardarUltimoExplorado(anio, ultimoConfirmado);
     }
-    return nuevas;
+    return { nuevas, corte };
   }
 
   async _consultar(page, anio, numero, contador) {
