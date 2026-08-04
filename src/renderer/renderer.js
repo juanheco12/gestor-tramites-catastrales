@@ -1075,6 +1075,11 @@ async function abrirPerfil() {
     : (estado.disponible
         ? 'Sin acceso guardado: cuando la sesión venza tendrá que iniciar sesión a mano.'
         : 'El cifrado del sistema no está disponible.');
+  const info = await window.bandejaApi.appVersion();
+  document.getElementById('perfil-version').textContent =
+    info.version + (info.instalada ? '' : ' (modo desarrollo)');
+  document.getElementById('perfil-actualizacion-estado').textContent = '';
+
   const configRad = await window.bandejaApi.radicacionesConfig();
   document.getElementById('radicaciones-activo').checked = configRad.activo;
   document.getElementById('radicaciones-usuario').value = configRad.usuario;
@@ -1089,6 +1094,19 @@ async function abrirPerfil() {
 }
 
 btnPerfil.addEventListener('click', abrirPerfil);
+
+document.getElementById('btn-buscar-actualizacion').addEventListener('click', async () => {
+  const boton = document.getElementById('btn-buscar-actualizacion');
+  const aviso = document.getElementById('perfil-actualizacion-estado');
+  boton.disabled = true;
+  aviso.textContent = 'Consultando...';
+  try {
+    const r = await window.bandejaApi.appBuscarActualizacion();
+    aviso.textContent = r.ok ? r.mensaje : r.error;
+  } finally {
+    boton.disabled = false;
+  }
+});
 
 document.getElementById('btn-guardar-radicaciones').addEventListener('click', async () => {
   const activo = document.getElementById('radicaciones-activo').checked;

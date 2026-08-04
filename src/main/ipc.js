@@ -1,6 +1,7 @@
 'use strict';
 
-const { ipcMain, shell, dialog } = require('electron');
+const { ipcMain, shell, dialog, app } = require('electron');
+const { autoUpdater } = require('electron-updater');
 
 const CANALES = {
   SINCRONIZAR: 'bandeja:sincronizar',
@@ -25,6 +26,8 @@ const CANALES = {
   RADICACIONES_RESUMEN: 'radicaciones:resumen',
   RADICACIONES_CONFIG: 'radicaciones:config',
   RADICACIONES_GUARDAR_CONFIG: 'radicaciones:guardar-config',
+  APP_VERSION: 'app:version',
+  APP_BUSCAR_ACTUALIZACION: 'app:buscar-actualizacion',
 };
 
 /**
@@ -277,6 +280,37 @@ function registrarIpc(contenedor, obtenerVentana) {
     } catch (error) {
       logger.error(`IPC exportar: ${error.message}`);
       return { ok: false, error: error.message };
+    }
+  });
+
+  /* ------------------------- versión y actualizaciones ------------------------- */
+
+  ipcMain.handle(CANALES.APP_VERSION, () => ({
+    version: app.getVersion(),
+    instalada: app.isPackaged,
+  }));
+
+  // Sin esto solo quedaba esperar al ciclo abrir → esperar → cerrar → abrir,
+  // sin forma de saber si la versión nueva ya había llegado.
+  ipcMain.handle(CANALES.APP_BUSCAR_ACTUALIZACION, async () => {
+    if (!app.isPackaged) {
+      return { ok: true, mensaje: 'En modo desarrollo no se buscan actualizaciones.' };
+    }
+    try {
+      const resultado = await autoUpdater.checkForUpdates();
+      const disponible = resultado && resultado.updateInfo ? resultado.updateInfo.version : null;
+      if (!disponible || disponible === app.getVersion()) {
+        return { ok: true, mensaje: `Ya tiene la última versión (${app.getVersion()}).` };
+      }
+      return {
+        ok: true,
+        mensaje:
+          `Descargando la versión ${disponible} en segundo plano. ` +
+          'Puede seguir trabajando: se instalará sola al cerrar el programa.',
+      };
+    } catch (error) {
+      logger.error(`IPC buscar actualización: ${error.message}`);
+      return { ok: false, error: `No se pudo consultar: ${error.message.split('\n')[0]}` };
     }
   });
 

@@ -27,6 +27,8 @@ const CANALES = {
   RADICACIONES_RESUMEN: 'radicaciones:resumen',
   RADICACIONES_CONFIG: 'radicaciones:config',
   RADICACIONES_GUARDAR_CONFIG: 'radicaciones:guardar-config',
+  APP_VERSION: 'app:version',
+  APP_BUSCAR_ACTUALIZACION: 'app:buscar-actualizacion',
 };
 
 contextBridge.exposeInMainWorld('bandejaApi', {
@@ -54,6 +56,8 @@ contextBridge.exposeInMainWorld('bandejaApi', {
   radicacionesConfig: () => ipcRenderer.invoke(CANALES.RADICACIONES_CONFIG),
   radicacionesGuardarConfig: (activo, usuario, desde) =>
     ipcRenderer.invoke(CANALES.RADICACIONES_GUARDAR_CONFIG, { activo, usuario, desde }),
+  appVersion: () => ipcRenderer.invoke(CANALES.APP_VERSION),
+  appBuscarActualizacion: () => ipcRenderer.invoke(CANALES.APP_BUSCAR_ACTUALIZACION),
   onProgreso: (callback) => {
     const listener = (_evento, datos) => callback(datos);
     ipcRenderer.on(CANALES.PROGRESO, listener);
