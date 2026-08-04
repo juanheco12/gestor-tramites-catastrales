@@ -12,6 +12,98 @@ const { normalizarFecha } = require('../utils/fechas');
 const ESPERA_RESULTADO_MS = 8000;
 
 /**
+ * Ubica los tres controles de la caja "TRÁMITE A CONSULTAR" (AÑO, NÚMERO y
+ * la lupa) y los marca con data-robot-campo para poder llenarlos sin
+ * ambigüedad. Corre DENTRO del navegador.
+ *
+ * No se usan selectores de proximidad (":near"): los dos campos están
+ * pegados, así que ambos resolvían al MISMO input y el número terminaba
+ * escrito en AÑO. Aquí se recorre la página en orden de lectura y se toma,
+ * para cada etiqueta, el campo que viene justo después.
+ */
+function UBICAR_FORMULARIO() {
+  const normalizar = (t) =>
+    (t || '')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toUpperCase()
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/:$/, '');
+
+  const items = [];
+  const recorrer = (nodo) => {
+    for (const hijo of nodo.children) {
+      const tag = hijo.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+        items.push({ campo: true, el: hijo, tipo: (hijo.getAttribute('type') || 'text').toLowerCase() });
+        continue;
+      }
+      const propio = Array.from(hijo.childNodes)
+        .filter((n) => n.nodeType === 3)
+        .map((n) => n.textContent)
+        .join(' ')
+        .trim();
+      if (propio) items.push({ campo: false, texto: normalizar(propio) });
+      recorrer(hijo);
+    }
+  };
+  recorrer(document.body);
+
+  document
+    .querySelectorAll('[data-robot-campo]')
+    .forEach((el) => el.removeAttribute('data-robot-campo'));
+
+  // Primer campo escribible que aparece después de la etiqueta.
+  const campoTras = (desde) => {
+    for (let j = desde + 1; j < items.length && j <= desde + 4; j++) {
+      const it = items[j];
+      if (it.campo && (it.tipo === 'text' || it.tipo === 'number')) return it.el;
+    }
+    return null;
+  };
+
+  let anio = null;
+  let numero = null;
+  let indiceNumero = -1;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.campo) continue;
+    // La etiqueta "AÑO" pierde la tilde de la Ñ al normalizar: queda "ANO".
+    if (!anio && it.texto === 'ANO') anio = campoTras(i);
+    if (!numero && it.texto === 'NUMERO') {
+      numero = campoTras(i);
+      indiceNumero = i;
+    }
+  }
+
+  // La lupa es el primer botón-imagen que aparece tras la caja de búsqueda.
+  let buscar = null;
+  if (indiceNumero >= 0) {
+    for (let j = indiceNumero + 1; j < items.length && j <= indiceNumero + 10; j++) {
+      const it = items[j];
+      if (it.campo && (it.tipo === 'image' || it.tipo === 'submit')) {
+        buscar = it.el;
+        break;
+      }
+    }
+  }
+  if (!buscar) buscar = document.querySelector("input[type='image']");
+
+  if (anio) anio.setAttribute('data-robot-campo', 'anio');
+  if (numero) numero.setAttribute('data-robot-campo', 'numero');
+  if (buscar) buscar.setAttribute('data-robot-campo', 'buscar');
+
+  return {
+    anio: Boolean(anio),
+    numero: Boolean(numero),
+    buscar: Boolean(buscar),
+    // Distintos: si algo falla, dice qué etiquetas había en pantalla.
+    etiquetas: [...new Set(items.filter((i) => !i.campo).map((i) => i.texto))].slice(0, 40),
+  };
+}
+
+/**
  * Lee los campos de la ficha del trámite. Corre DENTRO del navegador.
  *
  * Se recorre la página en orden de lectura armando una secuencia de
@@ -122,17 +214,52 @@ class ConsultaTramiteService {
     try {
       await page.goto(cfg.url, { waitUntil: 'domcontentloaded', timeout });
 
-      // Selectores "cerca de la etiqueta", igual que bandeja.accionesApertura:
-      // sobreviven a que los IDs internos cambien entre cuentas o versiones.
-      const campoAnio = page.locator("input:near(:text('AÑO'), 80)").first();
-      const campoNumero = page.locator("input:near(:text('NÚMERO'), 80)").first();
+      // Ubicar AÑO, NÚMERO y la lupa por su etiqueta, en orden de lectura.
+      // Antes se usaba ":near(texto)", pero los dos campos están pegados y
+      // AMBOS selectores caían en el mismo input: el número terminaba escrito
+      // en AÑO, NÚMERO quedaba vacío y edis respondía "Digite el año y el
+      // número de radicación". Se marcan los elementos y luego se llenan.
+      const ubicados = await page.evaluate(UBICAR_FORMULARIO);
+      if (!ubicados.anio || !ubicados.numero || !ubicados.buscar) {
+        this.logger.warn(
+          `Consulta ${partes.anio}-${partes.numero}: no se ubicó el formulario ` +
+          `(anio=${ubicados.anio} numero=${ubicados.numero} lupa=${ubicados.buscar}). ` +
+          `Etiquetas: ${(ubicados.etiquetas || []).join(' / ')}`
+        );
+        return null;
+      }
+
+      const campoAnio = page.locator('[data-robot-campo="anio"]');
+      const campoNumero = page.locator('[data-robot-campo="numero"]');
       await campoAnio.waitFor({ state: 'visible', timeout: 10000 });
       await campoAnio.fill(partes.anio);
       await campoNumero.fill(partes.numero);
 
-      const buscar = page.locator("input[type='image']:near(:text('NÚMERO'), 200)").first();
-      await buscar.click({ timeout: 8000 });
+      // Verificar ANTES de buscar que cada dato quedó en su campo: si no,
+      // la búsqueda saldría mal y el radicado se daría por inexistente.
+      const puestos = {
+        anio: await campoAnio.inputValue(),
+        numero: await campoNumero.inputValue(),
+      };
+      if (puestos.anio !== partes.anio || puestos.numero !== partes.numero) {
+        this.logger.warn(
+          `Consulta ${partes.anio}-${partes.numero}: los datos no quedaron en su campo ` +
+          `(AÑO="${puestos.anio}", NÚMERO="${puestos.numero}"). No se busca.`
+        );
+        return null;
+      }
+
+      await page.locator('[data-robot-campo="buscar"]').click({ timeout: 8000 });
       await page.waitForLoadState('domcontentloaded', { timeout }).catch(() => {});
+
+      // edis muestra un aviso propio ("Digite el año y el número de
+      // radicación") cuando la búsqueda le llega incompleta. Si aparece, se
+      // cierra: dejarlo abierto bloquearía todas las consultas siguientes.
+      const aviso = await this._descartarAviso(page);
+      if (aviso) {
+        this.logger.warn(`Consulta ${partes.anio}-${partes.numero}: edis respondió "${aviso}".`);
+        return null;
+      }
 
       // Sondeo hasta que la ficha traiga algo (ver ESPERA_RESULTADO_MS).
       const limite = Date.now() + ESPERA_RESULTADO_MS;
@@ -186,6 +313,27 @@ class ConsultaTramiteService {
   }
 
   /**
+   * Cierra el aviso emergente de edis si está en pantalla.
+   * @returns {Promise<string>} el texto del aviso, o '' si no había ninguno
+   */
+  async _descartarAviso(page) {
+    try {
+      const boton = page.locator("button:has-text('Aceptar'), input[value='Aceptar']").first();
+      if (!(await boton.isVisible({ timeout: 800 }).catch(() => false))) return '';
+      const texto = await page
+        .evaluate(() => {
+          const m = document.body.innerText.match(/ERROR[^\n]*/i);
+          return m ? m[0].trim() : 'aviso sin texto reconocible';
+        })
+        .catch(() => 'aviso');
+      await boton.click({ timeout: 3000 }).catch(() => {});
+      return texto;
+    } catch {
+      return '';
+    }
+  }
+
+  /**
    * Un radicado inexistente deja TODOS los campos en blanco; basta con que
    * uno traiga algo (incluido el estado, p. ej. "SIN TRAMITAR") para saber
    * que la ficha ya cargó y el radicado existe.
@@ -217,6 +365,7 @@ class ConsultaTramiteService {
   }
 }
 
-// LECTOR_FICHA se exporta para poder verificarlo contra una réplica de la
-// pantalla real sin tener que duplicar su código en la prueba.
-module.exports = { ConsultaTramiteService, LECTOR_FICHA };
+// Las funciones que corren dentro del navegador se exportan para poder
+// verificarlas contra una réplica de la pantalla real, sin duplicar su código
+// en la prueba (fue justamente probar una copia lo que dejó pasar dos bugs).
+module.exports = { ConsultaTramiteService, LECTOR_FICHA, UBICAR_FORMULARIO };
