@@ -70,20 +70,45 @@ class ConsultaTramiteService {
             .replace(/[̀-ͯ]/g, '')
             .toUpperCase()
             .replace(/\s+/g, ' ')
-            .trim();
+            .trim()
+            .replace(/:$/, '');
 
-        // El valor de cada campo vive en un <input> de una celda vecina a la
-        // que tiene la etiqueta; se mira un par de celdas a la derecha.
-        const celdas = Array.from(document.querySelectorAll('td, th'));
+        // Se recorre la página en orden de lectura armando una secuencia de
+        // etiquetas y campos. Buscar "la celda de al lado" no servía: la
+        // página anida tablas, así que el textContent de una celda de afuera
+        // se traga el bloque entero y nunca coincide con la etiqueta exacta.
+        const secuencia = [];
+        const recorrer = (nodo) => {
+          for (const hijo of nodo.children) {
+            const etiquetaHtml = hijo.tagName;
+            if (etiquetaHtml === 'INPUT' || etiquetaHtml === 'TEXTAREA' || etiquetaHtml === 'SELECT') {
+              const tipo = (hijo.getAttribute('type') || '').toLowerCase();
+              if (tipo !== 'image' && tipo !== 'submit' && tipo !== 'button') {
+                secuencia.push({ campo: true, valor: (hijo.value || '').trim() });
+              }
+              continue;
+            }
+            // Texto propio del elemento (sin lo que aportan sus hijos): es lo
+            // que distingue una etiqueta real de un contenedor.
+            const propio = Array.from(hijo.childNodes)
+              .filter((n) => n.nodeType === 3)
+              .map((n) => n.textContent)
+              .join(' ')
+              .trim();
+            if (propio) secuencia.push({ campo: false, texto: normalizar(propio) });
+            recorrer(hijo);
+          }
+        };
+        recorrer(document.body);
+
         const leer = (etiqueta) => {
           const objetivo = normalizar(etiqueta);
-          for (let i = 0; i < celdas.length; i++) {
-            const texto = normalizar(celdas[i].textContent);
-            if (texto !== objetivo && texto !== `${objetivo}:`) continue;
-            for (let j = i + 1; j < celdas.length && j <= i + 3; j++) {
-              const input = celdas[j].querySelector('input, textarea, select');
-              const valor = (input ? input.value : celdas[j].textContent || '').trim();
-              if (valor) return valor;
+          for (let i = 0; i < secuencia.length; i++) {
+            const item = secuencia[i];
+            if (item.campo || item.texto !== objetivo) continue;
+            // El valor es el primer campo que aparece después de la etiqueta.
+            for (let j = i + 1; j < secuencia.length && j <= i + 4; j++) {
+              if (secuencia[j].campo) return secuencia[j].valor;
             }
           }
           return '';
@@ -97,12 +122,27 @@ class ConsultaTramiteService {
           interesado: leer('Nombre'),
           fechaEnvioRevision: leer('Fecha envío a revisión'),
           estado: leer('Estado del trámite'),
+          // Para diagnosticar si la lectura falla: qué etiquetas se vieron.
+          etiquetas: secuencia.filter((s) => !s.campo).map((s) => s.texto).slice(0, 60),
         };
       });
 
       const fechaRadicacion = this._fecha(datos.fechaRadicacion);
-      // Sin fecha de radicación ni usuario, ese número todavía no existe.
-      const existe = Boolean(fechaRadicacion || datos.usuarioRadica);
+      // Un radicado que no existe deja TODOS los campos en blanco; basta con
+      // que uno traiga algo (incluido el estado, p. ej. "SIN TRAMITAR") para
+      // saber que sí existe.
+      const existe = Boolean(fechaRadicacion || datos.usuarioRadica || datos.clase || datos.estado);
+
+      // Si la página respondió pero no se entendió ningún campo, el problema
+      // es del lector, no del radicado: se registra qué etiquetas se vieron
+      // para poder corregirlo sin adivinar.
+      if (!existe && !this._avisoLecturaDado) {
+        this._avisoLecturaDado = true;
+        this.logger.warn(
+          `Consulta ${partes.anio}-${partes.numero}: no se leyó ningún campo. ` +
+          `Etiquetas encontradas en la página: ${(datos.etiquetas || []).join(' | ')}`
+        );
+      }
 
       return {
         existe,

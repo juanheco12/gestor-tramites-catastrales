@@ -194,10 +194,22 @@ class RadicacionesService {
     // número todavía no existe, la próxima corrida lo vuelve a mirar en vez
     // de saltárselo para siempre.
     let ultimoConfirmado = ultimoExplorado;
+    let erroresSeguidos = 0;
 
     while (huecosSeguidos < TOLERANCIA_HUECOS && contador.consultas < MAX_CONSULTAS_POR_CORRIDA) {
       const datos = await this._consultar(page, anio, numero, contador);
-      if (datos === null) break; // error de red: se corta sin mover el puntero
+
+      if (datos === null) {
+        // Un tropiezo suelto (red lenta, postback que tardó) no debe cortar
+        // el recorrido entero: se reintenta el mismo número un par de veces.
+        erroresSeguidos++;
+        if (erroresSeguidos >= 3) {
+          this.logger.warn(`Radicaciones: 3 errores seguidos en ${anio}-${numero}; se corta el recorrido.`);
+          break;
+        }
+        continue;
+      }
+      erroresSeguidos = 0;
 
       if (!datos.existe) {
         huecosSeguidos++;
@@ -223,11 +235,12 @@ class RadicacionesService {
   }
 
   async _consultar(page, anio, numero, contador) {
-    // Solo la primera consulta navega a la página; el resto reutiliza el
-    // formulario que ya quedó abierto (3x más rápido en recorridos largos).
-    const navegar = contador.consultas === 0;
     contador.consultas++;
-    const datos = await this.consulta.consultar(page, { anio, numero }, { navegar });
+    // Se recarga la página en cada consulta a propósito. Reutilizar el
+    // formulario ya abierto era ~3x más rápido, pero tras la búsqueda la
+    // página queda en un estado en el que volver a escribir el número falla:
+    // el recorrido se cortaba en la segunda consulta y no contaba nada.
+    const datos = await this.consulta.consultar(page, { anio, numero });
     await esperar(PAUSA_MS);
     return datos;
   }
