@@ -51,6 +51,27 @@ class RadicacionRepository {
     this.guardarEstado(`radicaciones.ultimoExplorado.${anio}`, numero);
   }
 
+  /**
+   * Radicado desde el cual empezar a contar, si el usuario lo indicó
+   * ("2026-7272"). Evita tener que adivinar por tanteo dónde va la
+   * numeración de la oficina: el usuario ya sabe uno de los suyos.
+   */
+  desde() {
+    return this.obtenerEstado('radicaciones.desde') || '';
+  }
+
+  /**
+   * Diagnóstico de la última corrida, para que el panel pueda decir qué pasó
+   * en vez de mostrar una tabla vacía sin explicación.
+   */
+  guardarDiagnostico(texto) {
+    this.guardarEstado('radicaciones.diagnostico', `${new Date().toLocaleString('es-CO')} — ${texto}`);
+  }
+
+  diagnostico() {
+    return this.obtenerEstado('radicaciones.diagnostico') || '';
+  }
+
   /* ------------------------- radicaciones ------------------------- */
 
   /**

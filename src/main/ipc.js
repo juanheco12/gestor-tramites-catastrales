@@ -289,9 +289,11 @@ function registrarIpc(contenedor, obtenerVentana) {
   ipcMain.handle(CANALES.RADICACIONES_CONFIG, () => ({
     activo: radicacionRepository.activo(),
     usuario: radicacionRepository.obtenerEstado('radicaciones.usuario') || '',
+    desde: radicacionRepository.desde(),
+    diagnostico: radicacionRepository.diagnostico(),
   }));
 
-  ipcMain.handle(CANALES.RADICACIONES_GUARDAR_CONFIG, (_evento, { activo, usuario }) => {
+  ipcMain.handle(CANALES.RADICACIONES_GUARDAR_CONFIG, (_evento, { activo, usuario, desde }) => {
     try {
       const nombre = String(usuario || '').trim();
       if (activo && !nombre) {
@@ -300,8 +302,23 @@ function registrarIpc(contenedor, obtenerVentana) {
           'permite distinguir sus radicaciones de las de sus compañeros.'
         );
       }
+      const inicio = String(desde || '').trim();
+      if (inicio && !/^\d{4}-\d+$/.test(inicio)) {
+        throw new Error('El radicado de inicio debe tener la forma AÑO-NÚMERO, por ejemplo 2026-7272.');
+      }
+
+      const desdeAnterior = radicacionRepository.desde();
       radicacionRepository.guardarEstado('radicaciones.usuario', nombre);
+      radicacionRepository.guardarEstado('radicaciones.desde', inicio);
       radicacionRepository.activar(activo);
+
+      // Cambiar el punto de arranque solo sirve si se vuelve a recorrer desde
+      // ahí: si no, el recorrido seguiría desde donde había quedado y el
+      // cambio no tendría ningún efecto visible.
+      if (inicio && inicio !== desdeAnterior) {
+        const anio = inicio.split('-')[0];
+        radicacionRepository.guardarEstado(`radicaciones.ultimoExplorado.${anio}`, '');
+      }
       return { ok: true };
     } catch (error) {
       logger.error(`IPC radicaciones config: ${error.message}`);

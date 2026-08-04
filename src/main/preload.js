@@ -52,8 +52,8 @@ contextBridge.exposeInMainWorld('bandejaApi', {
   radicacionesListar: () => ipcRenderer.invoke(CANALES.RADICACIONES_LISTAR),
   radicacionesResumen: () => ipcRenderer.invoke(CANALES.RADICACIONES_RESUMEN),
   radicacionesConfig: () => ipcRenderer.invoke(CANALES.RADICACIONES_CONFIG),
-  radicacionesGuardarConfig: (activo, usuario) =>
-    ipcRenderer.invoke(CANALES.RADICACIONES_GUARDAR_CONFIG, { activo, usuario }),
+  radicacionesGuardarConfig: (activo, usuario, desde) =>
+    ipcRenderer.invoke(CANALES.RADICACIONES_GUARDAR_CONFIG, { activo, usuario, desde }),
   onProgreso: (callback) => {
     const listener = (_evento, datos) => callback(datos);
     ipcRenderer.on(CANALES.PROGRESO, listener);

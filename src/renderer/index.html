@@ -254,6 +254,7 @@
       <input id="buscador-radicaciones" type="search" placeholder="Buscar por radicado, clase, NPN o interesado..." />
       <button id="btn-copiar-radicados" class="btn-secundario">Copiar radicados de hoy</button>
     </section>
+    <p id="radicaciones-aviso" class="modal-nota oculto"></p>
     <main>
       <section class="panel">
         <h2>Mis radicaciones <span id="contador-radicaciones" class="badge"></span> <span class="pista">Detectadas automáticamente en edis, sin escribirlas a mano</span></h2>
@@ -334,8 +335,16 @@
           Escríbalo igual que aparece en edis (nombre completo). Es lo que permite separar
           sus radicaciones de las de sus compañeros.
         </p>
+        <label>Empezar a contar desde el radicado
+          <input id="radicaciones-desde" type="text" placeholder="2026-7272" />
+        </label>
+        <p class="modal-nota">
+          Escriba un radicado suyo (el primero del que quiera llevar la cuenta). Si lo deja
+          vacío, el sistema tiene que averiguarlo solo y la primera sincronización tarda varios minutos.
+        </p>
         <p id="radicaciones-estado" class="modal-nota"></p>
         <button id="btn-guardar-radicaciones" class="btn-secundario">Guardar</button>
+        <p id="radicaciones-diagnostico" class="modal-nota"></p>
       </section>
 
       <section class="perfil-seccion">

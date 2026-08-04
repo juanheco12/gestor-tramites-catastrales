@@ -677,6 +677,13 @@ async function cargarRadicaciones() {
   document.getElementById('m-rad-semana').textContent = resumen.semana ?? 0;
   document.getElementById('m-rad-mes').textContent = resumen.mes ?? 0;
   document.getElementById('m-rad-total').textContent = resumen.total ?? 0;
+
+  // Una tabla vacía sin explicación no dice si el sistema no encontró nada o
+  // si directamente no llegó a buscar: se muestra qué pasó en la última vuelta.
+  const aviso = document.getElementById('radicaciones-aviso');
+  aviso.textContent = config.diagnostico || '';
+  aviso.classList.toggle('oculto', !config.diagnostico);
+
   pintarRadicaciones();
 }
 
@@ -1071,7 +1078,11 @@ async function abrirPerfil() {
   const configRad = await window.bandejaApi.radicacionesConfig();
   document.getElementById('radicaciones-activo').checked = configRad.activo;
   document.getElementById('radicaciones-usuario').value = configRad.usuario;
+  document.getElementById('radicaciones-desde').value = configRad.desde || '';
   document.getElementById('radicaciones-estado').textContent = '';
+  document.getElementById('radicaciones-diagnostico').textContent = configRad.diagnostico
+    ? `Última revisión: ${configRad.diagnostico}`
+    : '';
 
   await cargarLogs();
   modalPerfil.classList.remove('oculto');
@@ -1082,15 +1093,16 @@ btnPerfil.addEventListener('click', abrirPerfil);
 document.getElementById('btn-guardar-radicaciones').addEventListener('click', async () => {
   const activo = document.getElementById('radicaciones-activo').checked;
   const usuario = document.getElementById('radicaciones-usuario').value;
+  const desde = document.getElementById('radicaciones-desde').value;
   const aviso = document.getElementById('radicaciones-estado');
 
-  const r = await window.bandejaApi.radicacionesGuardarConfig(activo, usuario);
+  const r = await window.bandejaApi.radicacionesGuardarConfig(activo, usuario, desde);
   if (!r.ok) {
     aviso.textContent = r.error;
     return;
   }
   aviso.textContent = activo
-    ? 'Listo. En la próxima sincronización empezarán a contarse sus radicaciones.'
+    ? 'Listo. Pulse Sincronizar para que empiecen a contarse sus radicaciones.'
     : 'Conteo de radicaciones desactivado.';
   await cargarRadicaciones();
 });
@@ -1267,7 +1279,11 @@ window.bandejaApi.onProgreso((datos) => {
     mostrarEstado('exito',
       `Sincronización ${r.estado} (${new Date().toLocaleTimeString()}): ` +
       `${r.leidos} leídos, ${r.nuevos} nuevos. ${r.mensajeNuevos || ''}`);
-    refrescarTodo();
+    // Sin el catch, un fallo al recargar cualquier panel se perdía como
+    // promesa rechazada y dejaba tarjetas en "—" sin ninguna explicación.
+    refrescarTodo().catch((error) => {
+      mostrarEstado('error', `No se pudo refrescar la pantalla: ${error.message}`);
+    });
   }
 });
 

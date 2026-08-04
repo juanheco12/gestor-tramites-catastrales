@@ -58,6 +58,14 @@ class RadicacionesService {
    * @returns {Promise<{nuevas: number, consultas: number, omitido?: string}>}
    */
   async detectar(page, { numerosConocidos = [] } = {}) {
+    const resultado = await this._detectar(page, { numerosConocidos });
+    // Queda registrado SIEMPRE, también cuando no hizo nada: una tabla vacía
+    // sin explicación es lo que hizo perder tiempo antes.
+    this.repo.guardarDiagnostico(this._explicar(resultado));
+    return resultado;
+  }
+
+  async _detectar(page, { numerosConocidos = [] } = {}) {
     if (!this.repo.activo()) return { nuevas: 0, consultas: 0, omitido: 'inactivo' };
 
     const usuario = this.repo.obtenerEstado('radicaciones.usuario');
@@ -71,16 +79,43 @@ class RadicacionesService {
     let nuevas = 0;
 
     if (ultimo === null) {
-      const arranque = await this._arranqueInicial(page, anio, numerosConocidos, usuario, contador);
-      if (arranque === null) {
-        return { nuevas: 0, consultas: contador.consultas, omitido: 'sin-punto-de-partida' };
+      // Si el usuario indicó desde qué radicado empezar (sabe uno suyo), se
+      // arranca ahí: es exacto y gratis, frente a adivinar por tanteo dónde
+      // va la numeración de la oficina (decenas de consultas).
+      const desde = this._numeroDesde(anio);
+      if (desde !== null) {
+        ultimo = desde - 1;
+        this.logger.info(`Radicaciones: empezando el conteo desde ${anio}-${desde} (indicado por el usuario).`);
+      } else {
+        const arranque = await this._arranqueInicial(page, anio, numerosConocidos, usuario, contador);
+        if (arranque === null) {
+          return { nuevas: 0, consultas: contador.consultas, omitido: 'sin-punto-de-partida' };
+        }
+        ultimo = arranque.ultimo;
+        nuevas += arranque.nuevas;
       }
-      ultimo = arranque.ultimo;
-      nuevas += arranque.nuevas;
     }
 
     nuevas += await this._recorrerHaciaArriba(page, anio, ultimo, usuario, contador);
-    return { nuevas, consultas: contador.consultas };
+    return { nuevas, consultas: contador.consultas, usuario };
+  }
+
+  /** Número de arranque configurado por el usuario ("2026-7272" -> 7272), si es de este año. */
+  _numeroDesde(anio) {
+    const m = String(this.repo.desde() || '').match(/^(\d{4})-(\d+)$/);
+    if (!m || m[1] !== anio) return null;
+    const n = parseInt(m[2], 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  _explicar(r) {
+    if (r.omitido === 'inactivo') return 'Conteo desactivado en Mi perfil.';
+    if (r.omitido === 'sin-usuario') return 'Falta escribir su nombre de edis en Mi perfil.';
+    if (r.omitido === 'sin-punto-de-partida') {
+      return 'No se pudo ubicar el último radicado de la oficina. Indique en Mi perfil un radicado suyo desde el cual empezar.';
+    }
+    if (r.nuevas > 0) return `${r.nuevas} radicación(es) nuevas detectadas (${r.consultas} consultas).`;
+    return `Sin radicaciones nuevas a nombre de "${r.usuario}" (${r.consultas} consultas revisadas).`;
   }
 
   /**
