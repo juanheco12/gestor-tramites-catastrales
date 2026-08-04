@@ -3,6 +3,82 @@
 const { normalizarFecha } = require('../utils/fechas');
 
 /**
+ * Cuánto se espera, tras pulsar la lupa, a que aparezcan los datos de la
+ * ficha. No puede ser un tiempo fijo corto: en una red lenta la ficha aún no
+ * cargó y se leería el formulario en blanco, o sea "no existe" para TODOS los
+ * radicados. Se sondea hasta este límite; agotarlo sí significa que el
+ * radicado no existe.
+ */
+const ESPERA_RESULTADO_MS = 8000;
+
+/**
+ * Lee los campos de la ficha del trámite. Corre DENTRO del navegador.
+ *
+ * Se recorre la página en orden de lectura armando una secuencia de
+ * etiquetas y campos. Buscar "la celda de al lado" no sirve: la página anida
+ * tablas, así que el textContent de una celda de afuera se traga el bloque
+ * entero y nunca coincide con la etiqueta exacta.
+ */
+function LECTOR_FICHA() {
+  const normalizar = (t) =>
+    (t || '')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toUpperCase()
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/:$/, '');
+
+  const secuencia = [];
+  const recorrer = (nodo) => {
+    for (const hijo of nodo.children) {
+      const tag = hijo.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+        const tipo = (hijo.getAttribute('type') || '').toLowerCase();
+        if (tipo !== 'image' && tipo !== 'submit' && tipo !== 'button') {
+          secuencia.push({ campo: true, valor: (hijo.value || '').trim() });
+        }
+        continue;
+      }
+      // Texto PROPIO del elemento (sin lo que aportan sus hijos): es lo que
+      // distingue una etiqueta real de un contenedor.
+      const propio = Array.from(hijo.childNodes)
+        .filter((n) => n.nodeType === 3)
+        .map((n) => n.textContent)
+        .join(' ')
+        .trim();
+      if (propio) secuencia.push({ campo: false, texto: normalizar(propio) });
+      recorrer(hijo);
+    }
+  };
+  recorrer(document.body);
+
+  const leer = (etiqueta) => {
+    const objetivo = normalizar(etiqueta);
+    for (let i = 0; i < secuencia.length; i++) {
+      if (secuencia[i].campo || secuencia[i].texto !== objetivo) continue;
+      // El valor es el primer campo que aparece después de la etiqueta.
+      for (let j = i + 1; j < secuencia.length && j <= i + 4; j++) {
+        if (secuencia[j].campo) return secuencia[j].valor;
+      }
+    }
+    return '';
+  };
+
+  return {
+    fechaRadicacion: leer('Fecha Radicación'),
+    usuarioRadica: leer('Usuario que radica'),
+    clase: leer('Clase'),
+    npn: leer('NPN'),
+    interesado: leer('Nombre'),
+    fechaEnvioRevision: leer('Fecha envío a revisión'),
+    estado: leer('Estado del trámite'),
+    // Para diagnosticar si la lectura falla: qué etiquetas se vieron.
+    etiquetas: secuencia.filter((s) => !s.campo).map((s) => s.texto).slice(0, 60),
+  };
+}
+
+/**
  * Lee la pantalla "Consulta de Trámites" de edis (búsqueda por año + número
  * de radicado). Es la única fuente disponible para dos cosas que el
  * aplicativo no expone en ningún reporte:
@@ -23,6 +99,7 @@ class ConsultaTramiteService {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
+    this.diagnosticoDado = false;
   }
 
   /**
@@ -34,7 +111,7 @@ class ConsultaTramiteService {
    *   null si no se pudo consultar (error de red/página); `existe: false` si la
    *   consulta funcionó pero ese número todavía no está radicado.
    */
-  async consultar(page, radicado, { navegar = true } = {}) {
+  async consultar(page, radicado) {
     const cfg = this.config.consultaTramite;
     if (!cfg || !cfg.url) return null;
 
@@ -43,13 +120,7 @@ class ConsultaTramiteService {
     const timeout = this.config.browser.timeoutMs;
 
     try {
-      // Cuando se consultan muchos radicados seguidos (conteo de
-      // radicaciones), recargar la página entera en cada uno multiplica el
-      // tiempo por 3: el formulario sigue ahí después de buscar, así que
-      // basta reescribir el número y volver a pulsar la lupa.
-      if (navegar || !(await this._formularioListo(page))) {
-        await page.goto(cfg.url, { waitUntil: 'domcontentloaded', timeout });
-      }
+      await page.goto(cfg.url, { waitUntil: 'domcontentloaded', timeout });
 
       // Selectores "cerca de la etiqueta", igual que bandeja.accionesApertura:
       // sobreviven a que los IDs internos cambien entre cuentas o versiones.
@@ -61,86 +132,29 @@ class ConsultaTramiteService {
 
       const buscar = page.locator("input[type='image']:near(:text('NÚMERO'), 200)").first();
       await buscar.click({ timeout: 8000 });
-      await page.waitForTimeout(1200);
+      await page.waitForLoadState('domcontentloaded', { timeout }).catch(() => {});
 
-      const datos = await page.evaluate(() => {
-        const normalizar = (t) =>
-          (t || '')
-            .normalize('NFD')
-            .replace(/[̀-ͯ]/g, '')
-            .toUpperCase()
-            .replace(/\s+/g, ' ')
-            .trim()
-            .replace(/:$/, '');
-
-        // Se recorre la página en orden de lectura armando una secuencia de
-        // etiquetas y campos. Buscar "la celda de al lado" no servía: la
-        // página anida tablas, así que el textContent de una celda de afuera
-        // se traga el bloque entero y nunca coincide con la etiqueta exacta.
-        const secuencia = [];
-        const recorrer = (nodo) => {
-          for (const hijo of nodo.children) {
-            const etiquetaHtml = hijo.tagName;
-            if (etiquetaHtml === 'INPUT' || etiquetaHtml === 'TEXTAREA' || etiquetaHtml === 'SELECT') {
-              const tipo = (hijo.getAttribute('type') || '').toLowerCase();
-              if (tipo !== 'image' && tipo !== 'submit' && tipo !== 'button') {
-                secuencia.push({ campo: true, valor: (hijo.value || '').trim() });
-              }
-              continue;
-            }
-            // Texto propio del elemento (sin lo que aportan sus hijos): es lo
-            // que distingue una etiqueta real de un contenedor.
-            const propio = Array.from(hijo.childNodes)
-              .filter((n) => n.nodeType === 3)
-              .map((n) => n.textContent)
-              .join(' ')
-              .trim();
-            if (propio) secuencia.push({ campo: false, texto: normalizar(propio) });
-            recorrer(hijo);
-          }
-        };
-        recorrer(document.body);
-
-        const leer = (etiqueta) => {
-          const objetivo = normalizar(etiqueta);
-          for (let i = 0; i < secuencia.length; i++) {
-            const item = secuencia[i];
-            if (item.campo || item.texto !== objetivo) continue;
-            // El valor es el primer campo que aparece después de la etiqueta.
-            for (let j = i + 1; j < secuencia.length && j <= i + 4; j++) {
-              if (secuencia[j].campo) return secuencia[j].valor;
-            }
-          }
-          return '';
-        };
-
-        return {
-          fechaRadicacion: leer('Fecha Radicación'),
-          usuarioRadica: leer('Usuario que radica'),
-          clase: leer('Clase'),
-          npn: leer('NPN'),
-          interesado: leer('Nombre'),
-          fechaEnvioRevision: leer('Fecha envío a revisión'),
-          estado: leer('Estado del trámite'),
-          // Para diagnosticar si la lectura falla: qué etiquetas se vieron.
-          etiquetas: secuencia.filter((s) => !s.campo).map((s) => s.texto).slice(0, 60),
-        };
-      });
+      // Sondeo hasta que la ficha traiga algo (ver ESPERA_RESULTADO_MS).
+      const limite = Date.now() + ESPERA_RESULTADO_MS;
+      let datos = await page.evaluate(LECTOR_FICHA);
+      while (!this._tieneAlgo(datos) && Date.now() < limite) {
+        await page.waitForTimeout(400);
+        datos = await page.evaluate(LECTOR_FICHA);
+      }
 
       const fechaRadicacion = this._fecha(datos.fechaRadicacion);
-      // Un radicado que no existe deja TODOS los campos en blanco; basta con
-      // que uno traiga algo (incluido el estado, p. ej. "SIN TRAMITAR") para
-      // saber que sí existe.
-      const existe = Boolean(fechaRadicacion || datos.usuarioRadica || datos.clase || datos.estado);
+      const existe = this._tieneAlgo(datos);
 
-      // Si la página respondió pero no se entendió ningún campo, el problema
-      // es del lector, no del radicado: se registra qué etiquetas se vieron
-      // para poder corregirlo sin adivinar.
-      if (!existe && !this._avisoLecturaDado) {
-        this._avisoLecturaDado = true;
-        this.logger.warn(
-          `Consulta ${partes.anio}-${partes.numero}: no se leyó ningún campo. ` +
-          `Etiquetas encontradas en la página: ${(datos.etiquetas || []).join(' | ')}`
+      // La PRIMERA consulta de cada corrida deja rastro de lo que vio: si algo
+      // cambia en edis, el log dice qué había en pantalla en vez de dejarnos
+      // adivinando por qué no se detectó nada.
+      if (!this.diagnosticoDado) {
+        this.diagnosticoDado = true;
+        this.logger.info(
+          `Consulta ${partes.anio}-${partes.numero}: existe=${existe} ` +
+          `fechaRad="${datos.fechaRadicacion}" usuarioRadica="${datos.usuarioRadica}" ` +
+          `clase="${datos.clase}" estado="${datos.estado}" | url=${page.url()} | ` +
+          `etiquetas: ${(datos.etiquetas || []).join(' / ')}`
         );
       }
 
@@ -171,13 +185,16 @@ class ConsultaTramiteService {
     return datos && datos.fechaEnvioRevision ? datos.fechaEnvioRevision : null;
   }
 
-  /** ¿La página actual ya es el formulario de consulta (se puede reutilizar)? */
-  async _formularioListo(page) {
-    try {
-      return (await page.locator("input:near(:text('AÑO'), 80)").count()) > 0;
-    } catch {
-      return false;
-    }
+  /**
+   * Un radicado inexistente deja TODOS los campos en blanco; basta con que
+   * uno traiga algo (incluido el estado, p. ej. "SIN TRAMITAR") para saber
+   * que la ficha ya cargó y el radicado existe.
+   */
+  _tieneAlgo(datos) {
+    if (!datos) return false;
+    return Boolean(
+      this._fecha(datos.fechaRadicacion) || datos.usuarioRadica || datos.clase || datos.estado
+    );
   }
 
   /** "2026-6431" -> {anio:'2026', numero:'6431'} (tolera "26-..." y "026-..."). */
@@ -200,4 +217,6 @@ class ConsultaTramiteService {
   }
 }
 
-module.exports = { ConsultaTramiteService };
+// LECTOR_FICHA se exporta para poder verificarlo contra una réplica de la
+// pantalla real sin tener que duplicar su código en la prueba.
+module.exports = { ConsultaTramiteService, LECTOR_FICHA };
