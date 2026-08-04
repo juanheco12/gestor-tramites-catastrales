@@ -23,6 +23,10 @@ const CANALES = {
   CREDENCIALES_GUARDAR: 'credenciales:guardar',
   CREDENCIALES_ESTADO: 'credenciales:estado',
   CREDENCIALES_BORRAR: 'credenciales:borrar',
+  RADICACIONES_LISTAR: 'radicaciones:listar',
+  RADICACIONES_RESUMEN: 'radicaciones:resumen',
+  RADICACIONES_CONFIG: 'radicaciones:config',
+  RADICACIONES_GUARDAR_CONFIG: 'radicaciones:guardar-config',
 };
 
 contextBridge.exposeInMainWorld('bandejaApi', {
@@ -45,6 +49,11 @@ contextBridge.exposeInMainWorld('bandejaApi', {
   credencialesGuardar: (usuario, clave) =>
     ipcRenderer.invoke(CANALES.CREDENCIALES_GUARDAR, { usuario, clave }),
   credencialesBorrar: () => ipcRenderer.invoke(CANALES.CREDENCIALES_BORRAR),
+  radicacionesListar: () => ipcRenderer.invoke(CANALES.RADICACIONES_LISTAR),
+  radicacionesResumen: () => ipcRenderer.invoke(CANALES.RADICACIONES_RESUMEN),
+  radicacionesConfig: () => ipcRenderer.invoke(CANALES.RADICACIONES_CONFIG),
+  radicacionesGuardarConfig: (activo, usuario) =>
+    ipcRenderer.invoke(CANALES.RADICACIONES_GUARDAR_CONFIG, { activo, usuario }),
   onProgreso: (callback) => {
     const listener = (_evento, datos) => callback(datos);
     ipcRenderer.on(CANALES.PROGRESO, listener);

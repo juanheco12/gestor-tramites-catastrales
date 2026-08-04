@@ -21,6 +21,10 @@ const CANALES = {
   CREDENCIALES_GUARDAR: 'credenciales:guardar',
   CREDENCIALES_ESTADO: 'credenciales:estado',
   CREDENCIALES_BORRAR: 'credenciales:borrar',
+  RADICACIONES_LISTAR: 'radicaciones:listar',
+  RADICACIONES_RESUMEN: 'radicaciones:resumen',
+  RADICACIONES_CONFIG: 'radicaciones:config',
+  RADICACIONES_GUARDAR_CONFIG: 'radicaciones:guardar-config',
 };
 
 /**
@@ -37,6 +41,7 @@ function registrarIpc(contenedor, obtenerVentana) {
     syncLogRepository,
     exportService,
     gestionRepository,
+    radicacionRepository,
     importService,
     credencialesService,
     logger,
@@ -271,6 +276,35 @@ function registrarIpc(contenedor, obtenerVentana) {
       return { ok: true, ruta };
     } catch (error) {
       logger.error(`IPC exportar: ${error.message}`);
+      return { ok: false, error: error.message };
+    }
+  });
+
+  /* ------------------------- radicaciones (ventanilla) ------------------------- */
+
+  ipcMain.handle(CANALES.RADICACIONES_LISTAR, () => radicacionRepository.listar());
+
+  ipcMain.handle(CANALES.RADICACIONES_RESUMEN, () => radicacionRepository.resumen());
+
+  ipcMain.handle(CANALES.RADICACIONES_CONFIG, () => ({
+    activo: radicacionRepository.activo(),
+    usuario: radicacionRepository.obtenerEstado('radicaciones.usuario') || '',
+  }));
+
+  ipcMain.handle(CANALES.RADICACIONES_GUARDAR_CONFIG, (_evento, { activo, usuario }) => {
+    try {
+      const nombre = String(usuario || '').trim();
+      if (activo && !nombre) {
+        throw new Error(
+          'Escriba su nombre tal como aparece en edis (campo "Usuario que radica"): es lo que ' +
+          'permite distinguir sus radicaciones de las de sus compañeros.'
+        );
+      }
+      radicacionRepository.guardarEstado('radicaciones.usuario', nombre);
+      radicacionRepository.activar(activo);
+      return { ok: true };
+    } catch (error) {
+      logger.error(`IPC radicaciones config: ${error.message}`);
       return { ok: false, error: error.message };
     }
   });

@@ -60,6 +60,29 @@ CREATE TABLE IF NOT EXISTS pos_tramite (
     detalle   TEXT
 );
 
+-- Radicaciones hechas por el propio usuario (ventanilla). Se detectan
+-- recorriendo los números de radicado consecutivos en "Consulta trámite" de
+-- edis y quedándose con los que tienen "Usuario que radica" = el usuario
+-- logueado. Solo se llena si el usuario activa el conteo en Mi perfil.
+CREATE TABLE IF NOT EXISTS radicaciones (
+    numero_radicado  TEXT    PRIMARY KEY,
+    fecha_radicacion TEXT,   -- ISO AAAA-MM-DD
+    usuario_radica   TEXT,
+    clase            TEXT,
+    npn              TEXT,
+    interesado       TEXT,
+    detectado_en     TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_radicaciones_fecha ON radicaciones (fecha_radicacion);
+
+-- Estado interno de la app (clave/valor): hasta qué número de radicado se
+-- exploró, si el conteo de radicaciones está activo, etc.
+CREATE TABLE IF NOT EXISTS app_estado (
+    clave TEXT PRIMARY KEY,
+    valor TEXT
+);
+
 -- Registro de cada ejecución de sincronización.
 CREATE TABLE IF NOT EXISTS sync_logs (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,

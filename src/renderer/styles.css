@@ -153,7 +153,8 @@ body {
 #vista-bandeja,
 #vista-historico,
 #vista-seguimientos,
-#vista-estadisticas {
+#vista-estadisticas,
+#vista-radicaciones {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -163,7 +164,8 @@ body {
 #vista-bandeja.oculto,
 #vista-historico.oculto,
 #vista-seguimientos.oculto,
-#vista-estadisticas.oculto {
+#vista-estadisticas.oculto,
+#vista-radicaciones.oculto {
   display: none;
 }
 
@@ -861,6 +863,15 @@ input.inp-sector { min-width: 40px; width: 52px; text-align: center; }
 .perfil-seccion:first-of-type { border-top: none; padding-top: 0; }
 .perfil-seccion h3 { font-size: 14px; }
 .perfil-seccion .btn-secundario, .perfil-seccion .btn-peligro { align-self: flex-start; }
+
+.perfil-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.perfil-check input { width: auto; margin: 0; }
 
 .estado-por_estudiar { color: var(--estado-por-estudiar); }
 .estado-estudiado { color: var(--estado-estudiado); }

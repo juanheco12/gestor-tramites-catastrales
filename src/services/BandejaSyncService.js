@@ -5,6 +5,7 @@ const { BrowserManager } = require('./BrowserManager');
 const { BandejaScraper } = require('./BandejaScraper');
 const { SyncEngine } = require('./SyncEngine');
 const { ConsultaTramiteService } = require('./ConsultaTramiteService');
+const { RadicacionesService } = require('./RadicacionesService');
 const { withRetry } = require('../utils/retry');
 
 // Umbral para decidir si vale la pena consultar en la web la fecha real de
@@ -42,6 +43,7 @@ class BandejaSyncService extends EventEmitter {
     bitacoraService = null,
     gestionRepository = null,
     credencialesService = null,
+    radicacionRepository = null,
   }) {
     super();
     this.config = config;
@@ -49,6 +51,8 @@ class BandejaSyncService extends EventEmitter {
     this.syncLogs = syncLogRepository;
     this.bitacora = bitacoraService;
     this.gestionRepository = gestionRepository;
+    this.tramiteRepository = tramiteRepository;
+    this.radicacionRepository = radicacionRepository;
 
     this.browserManager = new BrowserManager(config, logger, credencialesService);
     this.scraper = new BandejaScraper(config, logger, (mensaje) =>
@@ -56,6 +60,11 @@ class BandejaSyncService extends EventEmitter {
     );
     this.engine = new SyncEngine(tramiteRepository, database, logger, gestionRepository);
     this.consultaTramite = new ConsultaTramiteService(config, logger);
+    this.radicaciones = radicacionRepository
+      ? new RadicacionesService(radicacionRepository, this.consultaTramite, logger, (mensaje) =>
+          this._progreso('radicaciones', mensaje)
+        )
+      : null;
 
     this.enEjecucion = false;
   }
@@ -172,6 +181,26 @@ class BandejaSyncService extends EventEmitter {
         reglasAplicadas = this.gestionRepository.aplicarReglasDeEstado();
       }
 
+      // Radicaciones propias (solo ventanilla, y solo si activó el conteo).
+      // Un fallo acá nunca invalida la sincronización: los trámites ya
+      // quedaron guardados y esto es un extra.
+      let resultadoRadicaciones = null;
+      if (this.radicaciones && paginaActual) {
+        try {
+          resultadoRadicaciones = await this.radicaciones.detectar(paginaActual, {
+            numerosConocidos: tramitesWeb.map((t) => t.numero_tramite),
+          });
+          if (resultadoRadicaciones.nuevas > 0) {
+            this._progreso(
+              'radicaciones',
+              `${resultadoRadicaciones.nuevas} radicación(es) propias detectadas.`
+            );
+          }
+        } catch (error) {
+          this.logger.warn(`Detección de radicaciones fallida: ${error.message}`);
+        }
+      }
+
       // Cruce con la bitácora Excel del usuario: agrega los trámites que
       // faltan respetando el orden de la bandeja. Un fallo aquí no invalida
       // la sincronización (los datos ya quedaron en la base de datos).
@@ -203,6 +232,7 @@ class BandejaSyncService extends EventEmitter {
         detalleCambios: resumenPersistencia.detalleCambios,
         reglasAplicadas,
         bitacora: resultadoBitacora,
+        radicaciones: resultadoRadicaciones,
         mensajeNuevos:
           resumenPersistencia.nuevos === 0
             ? 'No hay trámites asignados recientemente.'

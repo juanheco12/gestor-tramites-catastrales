@@ -40,6 +40,10 @@
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
           <span>Estadísticas</span>
         </button>
+        <button class="vista oculto" id="vista-btn-radicaciones" data-vista="radicaciones" title="Radicaciones">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+          <span>Radicaciones</span>
+        </button>
       </nav>
 
       <div class="sidebar-pie">
@@ -237,6 +241,39 @@
       </section>
     </main>
   </div>
+
+  <!-- ==================== VISTA RADICACIONES (ventanilla) ==================== -->
+  <div id="vista-radicaciones" class="oculto">
+    <section class="tarjetas">
+      <div class="tarjeta"><span class="tarjeta-titulo">Radicadas hoy</span><span id="m-rad-hoy" class="tarjeta-valor">—</span></div>
+      <div class="tarjeta"><span class="tarjeta-titulo">Últimos 7 días</span><span id="m-rad-semana" class="tarjeta-valor">—</span></div>
+      <div class="tarjeta"><span class="tarjeta-titulo">Este mes</span><span id="m-rad-mes" class="tarjeta-valor">—</span></div>
+      <div class="tarjeta"><span class="tarjeta-titulo">Total registrado</span><span id="m-rad-total" class="tarjeta-valor">—</span></div>
+    </section>
+    <section class="filtros">
+      <input id="buscador-radicaciones" type="search" placeholder="Buscar por radicado, clase, NPN o interesado..." />
+      <button id="btn-copiar-radicados" class="btn-secundario">Copiar radicados de hoy</button>
+    </section>
+    <main>
+      <section class="panel">
+        <h2>Mis radicaciones <span id="contador-radicaciones" class="badge"></span> <span class="pista">Detectadas automáticamente en edis, sin escribirlas a mano</span></h2>
+        <div class="tabla-contenedor tabla-alta">
+          <table id="tabla-radicaciones">
+            <thead>
+              <tr>
+                <th data-col="numero_radicado">Radicado</th>
+                <th data-col="fecha_radicacion">Fecha</th>
+                <th data-col="clase">Clase</th>
+                <th data-col="npn">NPN</th>
+                <th class="th-obs" data-col="interesado">Interesado</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
     </div><!-- fin .contenido -->
   </div><!-- fin .app-layout -->
 
@@ -277,6 +314,28 @@
         <h3>Acceso al aplicativo edis</h3>
         <p id="perfil-acceso-estado" class="modal-texto"></p>
         <button id="btn-cambiar-acceso" class="btn-secundario">Configurar usuario y clave</button>
+      </section>
+
+      <section class="perfil-seccion">
+        <h3>Conteo de radicaciones (ventanilla)</h3>
+        <p class="modal-texto">
+          Solo para quien radica. El sistema revisa los radicados nuevos en edis y cuenta
+          los suyos automáticamente, sin que tenga que anotarlos a mano en Excel.
+          Si usted no radica, déjelo apagado.
+        </p>
+        <label class="perfil-check">
+          <input id="radicaciones-activo" type="checkbox" />
+          <span>Contar mis radicaciones</span>
+        </label>
+        <label>Mi nombre en edis
+          <input id="radicaciones-usuario" type="text" placeholder="Tal como aparece en &quot;Usuario que radica&quot;" />
+        </label>
+        <p class="modal-nota">
+          Escríbalo igual que aparece en edis (nombre completo). Es lo que permite separar
+          sus radicaciones de las de sus compañeros.
+        </p>
+        <p id="radicaciones-estado" class="modal-nota"></p>
+        <button id="btn-guardar-radicaciones" class="btn-secundario">Guardar</button>
       </section>
 
       <section class="perfil-seccion">
