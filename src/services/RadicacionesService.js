@@ -2,12 +2,16 @@
 
 /** Números seguidos sin existir que se toman como "llegué al final". */
 const TOLERANCIA_HUECOS = 4;
-/** Tope de consultas por corrida: evita una ráfaga larga contra el servidor. */
-const MAX_CONSULTAS_POR_CORRIDA = 120;
+/**
+ * Tope de consultas por corrida. Solo se acerca a este número la PRIMERA
+ * vez (hay que ubicar el tope de radicados de la oficina partiendo de cero);
+ * después de eso cada corrida gasta apenas unas pocas.
+ */
+const MAX_CONSULTAS_POR_CORRIDA = 200;
 /** Al activar el conteo, cuántos números hacia atrás se revisan para recuperar lo ya radicado hoy. */
 const MAX_RETROCESO_INICIAL = 60;
 /** Pausa entre consultas: el recorrido no debe sentirse como un ataque al servidor. */
-const PAUSA_MS = 400;
+const PAUSA_MS = 250;
 
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -87,21 +91,17 @@ class RadicacionesService {
    *   cual seguir la próxima vez, y cuántas radicaciones propias se recuperaron
    */
   async _arranqueInicial(page, anio, numerosConocidos, usuario, contador) {
-    const pista = this._mayorNumeroConocido(anio, numerosConocidos);
-    if (pista === null) {
-      this.logger.warn(
-        'Radicaciones: todavía no hay ningún radicado conocido de este año para saber por dónde empezar. ' +
-        'Sincronice la bandeja primero.'
-      );
-      return null;
-    }
+    // La pista (el mayor radicado propio ya conocido) solo ahorra consultas.
+    // Ventanilla NO tiene trámites asignados, así que casi siempre no hay
+    // pista: en ese caso se arranca desde cero y el tanteo la encuentra igual.
+    const pista = this._mayorNumeroConocido(anio, numerosConocidos) || 0;
 
-    this.onProgreso('Ubicando el último radicado de la oficina...');
-    // Desde la pista, avanzar a saltos hasta pasarse del tope, luego afinar
-    // uno por uno: llegar al tope real cuesta unas pocas consultas y no
-    // cientos, aunque la pista esté bastante por debajo.
+    this.onProgreso('Ubicando el último radicado de la oficina (solo la primera vez)...');
+    // Se avanza a saltos que se duplican hasta pasarse del tope y luego se
+    // afina hacia atrás: llegar al tope real cuesta unas pocas decenas de
+    // consultas aunque se empiece desde cero, no miles.
     let ultimoExistente = pista;
-    let salto = 32;
+    let salto = pista > 0 ? 32 : 512;
     while (contador.consultas < MAX_CONSULTAS_POR_CORRIDA) {
       const datos = await this._consultar(page, anio, ultimoExistente + salto, contador);
       if (datos === null) break;
@@ -115,6 +115,13 @@ class RadicacionesService {
       }
     }
 
+    if (ultimoExistente === 0) {
+      this.logger.warn('Radicaciones: no se encontró ningún radicado de este año para ubicar el punto de partida.');
+      return null;
+    }
+
+    this.onProgreso(`Último radicado de la oficina: ${anio}-${ultimoExistente}. Buscando los suyos de hoy...`);
+
     const hoy = new Date().toISOString().slice(0, 10);
     let nuevas = 0;
     let numero = ultimoExistente;
@@ -122,6 +129,9 @@ class RadicacionesService {
     while (numero > 0 && revisados < MAX_RETROCESO_INICIAL && contador.consultas < MAX_CONSULTAS_POR_CORRIDA) {
       const datos = await this._consultar(page, anio, numero, contador);
       revisados++;
+      if (revisados % 10 === 0) {
+        this.onProgreso(`Revisando radicados de hoy: ${anio}-${numero} (${nuevas} suyas hasta ahora)...`);
+      }
       if (datos === null) break;
       if (datos.existe) {
         // Los anteriores ya son de días previos: no interesan para el arranque.
@@ -178,8 +188,11 @@ class RadicacionesService {
   }
 
   async _consultar(page, anio, numero, contador) {
+    // Solo la primera consulta navega a la página; el resto reutiliza el
+    // formulario que ya quedó abierto (3x más rápido en recorridos largos).
+    const navegar = contador.consultas === 0;
     contador.consultas++;
-    const datos = await this.consulta.consultar(page, { anio, numero });
+    const datos = await this.consulta.consultar(page, { anio, numero }, { navegar });
     await esperar(PAUSA_MS);
     return datos;
   }

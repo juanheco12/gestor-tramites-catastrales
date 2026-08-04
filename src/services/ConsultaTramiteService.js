@@ -34,7 +34,7 @@ class ConsultaTramiteService {
    *   null si no se pudo consultar (error de red/página); `existe: false` si la
    *   consulta funcionó pero ese número todavía no está radicado.
    */
-  async consultar(page, radicado) {
+  async consultar(page, radicado, { navegar = true } = {}) {
     const cfg = this.config.consultaTramite;
     if (!cfg || !cfg.url) return null;
 
@@ -43,7 +43,13 @@ class ConsultaTramiteService {
     const timeout = this.config.browser.timeoutMs;
 
     try {
-      await page.goto(cfg.url, { waitUntil: 'domcontentloaded', timeout });
+      // Cuando se consultan muchos radicados seguidos (conteo de
+      // radicaciones), recargar la página entera en cada uno multiplica el
+      // tiempo por 3: el formulario sigue ahí después de buscar, así que
+      // basta reescribir el número y volver a pulsar la lupa.
+      if (navegar || !(await this._formularioListo(page))) {
+        await page.goto(cfg.url, { waitUntil: 'domcontentloaded', timeout });
+      }
 
       // Selectores "cerca de la etiqueta", igual que bandeja.accionesApertura:
       // sobreviven a que los IDs internos cambien entre cuentas o versiones.
@@ -55,7 +61,7 @@ class ConsultaTramiteService {
 
       const buscar = page.locator("input[type='image']:near(:text('NÚMERO'), 200)").first();
       await buscar.click({ timeout: 8000 });
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(1200);
 
       const datos = await page.evaluate(() => {
         const normalizar = (t) =>
@@ -123,6 +129,15 @@ class ConsultaTramiteService {
   async consultarFechaEnvio(page, numeroTramite) {
     const datos = await this.consultar(page, numeroTramite);
     return datos && datos.fechaEnvioRevision ? datos.fechaEnvioRevision : null;
+  }
+
+  /** ¿La página actual ya es el formulario de consulta (se puede reutilizar)? */
+  async _formularioListo(page) {
+    try {
+      return (await page.locator("input:near(:text('AÑO'), 80)").count()) > 0;
+    } catch {
+      return false;
+    }
   }
 
   /** "2026-6431" -> {anio:'2026', numero:'6431'} (tolera "26-..." y "026-..."). */

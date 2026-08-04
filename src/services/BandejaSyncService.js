@@ -195,6 +195,21 @@ class BandejaSyncService extends EventEmitter {
               'radicaciones',
               `${resultadoRadicaciones.nuevas} radicación(es) propias detectadas.`
             );
+          } else if (resultadoRadicaciones.omitido === 'sin-usuario') {
+            // Sin esto el conteo falla en silencio y parece que "no anda".
+            this._progreso(
+              'radicaciones',
+              'Conteo de radicaciones activo pero sin nombre configurado: escríbalo en Mi perfil.'
+            );
+          } else if (resultadoRadicaciones.omitido === 'sin-punto-de-partida') {
+            this._progreso(
+              'radicaciones',
+              'No se pudo ubicar el último radicado de la oficina; se reintenta en la próxima sincronización.'
+            );
+          } else if (resultadoRadicaciones.consultas > 0) {
+            this.logger.info(
+              `Radicaciones: ${resultadoRadicaciones.consultas} consulta(s), ninguna radicación propia nueva.`
+            );
           }
         } catch (error) {
           this.logger.warn(`Detección de radicaciones fallida: ${error.message}`);
