@@ -149,14 +149,43 @@ function LECTOR_FICHA() {
       .trim()
       .replace(/:$/, '');
 
+  const esBoton = (campo) => {
+    const tipo = (campo.getAttribute('type') || '').toLowerCase();
+    return tipo === 'image' || tipo === 'submit' || tipo === 'button' || tipo === 'hidden';
+  };
+
+  /**
+   * Valor de una celda. Se recorren TODOS sus controles y se toma el primero
+   * que no sea un botón: los campos de la ficha traen al lado un control de
+   * flechitas (▲▼) que es un botón-imagen, y quedarse con el primer control
+   * de la celda hacía descartar la fila entera. Por eso se leían Observaciones
+   * y los datos del interesado (sin flechitas) pero no Fecha Radicación,
+   * Clase, NPN ni Usuario que radica (con flechitas).
+   */
   const valorDe = (contenedor) => {
-    const campo = contenedor.querySelector('input, textarea, select');
-    if (campo) {
-      const tipo = (campo.getAttribute('type') || '').toLowerCase();
-      if (tipo === 'image' || tipo === 'submit' || tipo === 'button') return null;
+    for (const campo of contenedor.querySelectorAll('input, textarea, select')) {
+      if (esBoton(campo)) continue;
       return (campo.value || '').trim();
     }
     return null;
+  };
+
+  /**
+   * Texto de la etiqueta. Si la celda no tiene texto propio, la etiqueta
+   * puede venir dentro de un control de solo lectura o de una imagen: en esos
+   * casos innerText no devuelve nada y la fila se perdería.
+   */
+  const etiquetaDe = (celda) => {
+    const propio = normalizar(celda.innerText || celda.textContent);
+    if (propio) return propio;
+    for (const campo of celda.querySelectorAll('input, textarea')) {
+      if (esBoton(campo)) continue;
+      const v = normalizar(campo.value);
+      if (v) return v;
+    }
+    const img = celda.querySelector('img');
+    if (img) return normalizar(img.getAttribute('alt') || img.getAttribute('title'));
+    return '';
   };
 
   // --- Método 1: fila de tabla (etiqueta | valor) ---
@@ -164,7 +193,7 @@ function LECTOR_FICHA() {
   for (const fila of document.querySelectorAll('tr')) {
     const celdas = fila.children;
     if (celdas.length < 2) continue;
-    const etiqueta = normalizar(celdas[0].innerText || celdas[0].textContent);
+    const etiqueta = etiquetaDe(celdas[0]);
     if (!etiqueta || etiqueta.length > 60) continue;
     for (let j = 1; j < celdas.length; j++) {
       const valor = valorDe(celdas[j]);
@@ -183,10 +212,7 @@ function LECTOR_FICHA() {
     for (const hijo of nodo.children) {
       const tag = hijo.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
-        const tipo = (hijo.getAttribute('type') || '').toLowerCase();
-        if (tipo !== 'image' && tipo !== 'submit' && tipo !== 'button') {
-          secuencia.push({ campo: true, valor: (hijo.value || '').trim() });
-        }
+        if (!esBoton(hijo)) secuencia.push({ campo: true, valor: (hijo.value || '').trim() });
         continue;
       }
       const propio = Array.from(hijo.childNodes)
