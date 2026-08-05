@@ -242,14 +242,65 @@ function LECTOR_FICHA() {
     return porSecuencia(objetivo);
   };
 
+  /**
+   * Último recurso para "Usuario que radica": buscar el texto en cualquier
+   * parte de la página y tomar el primer control con valor que venga después,
+   * sin suponer nada sobre tablas ni celdas.
+   */
+  const buscarPorTextoSuelto = (etiqueta) => {
+    const objetivo = normalizar(etiqueta);
+    const todos = Array.from(document.querySelectorAll('*'));
+    for (let i = 0; i < todos.length; i++) {
+      const el = todos[i];
+      if (el.children.length > 0) continue; // solo el nodo más interno
+      if (normalizar(el.textContent) !== objetivo) continue;
+      // Desde ahí, el primer control con valor en orden de documento.
+      for (let j = i + 1; j < todos.length && j <= i + 30; j++) {
+        const cand = todos[j];
+        const tag = cand.tagName;
+        if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') continue;
+        if (esBoton(cand)) continue;
+        const v = (cand.value || '').trim();
+        if (v) return v;
+      }
+    }
+    return '';
+  };
+
+  /**
+   * Radiografía de la fila de "Usuario que radica": si los tres métodos
+   * fallan, esto trae el HTML real de esa parte de la página. Es lo único
+   * que permite escribir el selector correcto sin adivinar la estructura.
+   */
+  const radiografia = () => {
+    const objetivo = normalizar('Usuario que radica');
+    const limpiar = (s) => String(s || '').replace(/\s+/g, ' ').slice(0, 400);
+    for (const el of document.querySelectorAll('td, th, span, div, label, b, font')) {
+      if (el.children.length > 0) continue;
+      if (!normalizar(el.textContent).includes(objetivo)) continue;
+      const contenedor = el.closest('tr') || el.parentElement;
+      return `HTML: ${limpiar(contenedor ? contenedor.outerHTML : el.outerHTML)}`;
+    }
+    // Quizá la etiqueta no es texto sino el valor de un control.
+    for (const campo of document.querySelectorAll('input, textarea')) {
+      if (!normalizar(campo.value).includes(objetivo)) continue;
+      const contenedor = campo.closest('tr') || campo.parentElement;
+      return `ETIQUETA-EN-CAMPO: ${limpiar(contenedor ? contenedor.outerHTML : '')}`;
+    }
+    return 'El texto "Usuario que radica" NO aparece en la página.';
+  };
+
+  const usuarioRadica = leer('Usuario que radica') || buscarPorTextoSuelto('Usuario que radica');
+
   return {
     fechaRadicacion: leer('Fecha Radicación'),
-    usuarioRadica: leer('Usuario que radica'),
+    usuarioRadica,
     clase: leer('Clase'),
     npn: leer('NPN'),
     interesado: leer('Nombre'),
     fechaEnvioRevision: leer('Fecha envío a revisión'),
     estado: leer('Estado del trámite'),
+    radiografia: usuarioRadica ? '' : radiografia(),
     // Para diagnosticar si la lectura falla. Se devuelven PARES
     // etiqueta=valor, no solo etiquetas: así se distingue "no encontré la
     // etiqueta" (estructura distinta) de "la encontré pero el valor vino
@@ -388,6 +439,9 @@ class ConsultaTramiteService {
       this.ultimasEtiquetas = datos.etiquetas || [];
       this.ultimosPares = datos.pares || [];
       this.ultimoTotalFilas = datos.totalFilas || 0;
+      // Solo viene cuando NO se pudo leer "Usuario que radica": trae el HTML
+      // real de esa fila, que es lo que hace falta para corregir el lector.
+      if (datos.radiografia) this.ultimaRadiografia = datos.radiografia;
 
       const fechaRadicacion = this._fecha(datos.fechaRadicacion);
       const existe = this._tieneAlgo(datos);

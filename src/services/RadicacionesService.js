@@ -70,8 +70,14 @@ class RadicacionesService {
    */
   async detectar(page, { numerosConocidos = [] } = {}) {
     this.muestras = [];
+    this.consulta.ultimaRadiografia = '';
     const resultado = await this._detectar(page, { numerosConocidos });
-    this.repo.guardarEstado('radicaciones.traza', this.muestras.join(' · '));
+    // Si no se pudo leer "Usuario que radica" en ninguna consulta, se muestra
+    // el HTML real de esa fila: es lo único que permite escribir el selector
+    // correcto sin seguir adivinando la estructura de la página.
+    const radiografia = this.consulta.ultimaRadiografia;
+    const traza = this.muestras.join(' · ') + (radiografia ? ` ⟶ ${radiografia}` : '');
+    this.repo.guardarEstado('radicaciones.traza', traza);
     // Queda registrado SIEMPRE, también cuando no hizo nada: una tabla vacía
     // sin explicación es lo que hizo perder tiempo antes.
     this.repo.guardarDiagnostico(this._explicar(resultado));
