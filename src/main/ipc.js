@@ -306,13 +306,25 @@ function registrarIpc(contenedor, obtenerVentana) {
             interactivo: false,
           });
           const datos = await syncService.consultaTramite.consultar(page, tramite.numero_tramite);
-          if (datos && datos.existe) {
+          // No se exige datos.existe: ese indicador se apoya en los campos de
+          // la izquierda de la ficha (estado, fecha, clase), y si esos no se
+          // leen se descartaban los datos del interesado AUNQUE hubieran
+          // llegado bien. Alcanza con que venga cualquiera de los cuatro.
+          if (datos && (datos.interesado || datos.telefono || datos.email || datos.direccion)) {
             interesado = {
               nombre: datos.interesado,
               telefono: datos.telefono,
               email: datos.email,
               direccion: datos.direccion,
             };
+            logger.info(
+              `Acta ${tramite.numero_tramite}: interesado="${datos.interesado}" ` +
+              `tel="${datos.telefono}" email="${datos.email}" dir="${datos.direccion}"`
+            );
+          } else {
+            logger.warn(
+              `Acta ${tramite.numero_tramite}: no se leyeron los datos del interesado en edis.`
+            );
           }
         } catch (error) {
           logger.warn(`Acta ${tramite.numero_tramite}: sin datos del interesado (${error.message}).`);

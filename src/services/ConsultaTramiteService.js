@@ -558,13 +558,23 @@ class ConsultaTramiteService {
 
   /**
    * Un radicado inexistente deja TODOS los campos en blanco; basta con que
-   * uno traiga algo (incluido el estado, p. ej. "SIN TRAMITAR") para saber
-   * que la ficha ya cargó y el radicado existe.
+   * uno traiga algo para saber que la ficha ya cargó y el radicado existe.
+   *
+   * Se incluyen los datos del interesado a propósito: en esta pantalla son los
+   * que se leen con más fiabilidad, y mirar solo los de la izquierda (estado,
+   * fecha, clase) daba "no existe" para trámites que sí existían y de los que
+   * ya se había leído el nombre y el teléfono.
    */
   _tieneAlgo(datos) {
     if (!datos) return false;
     return Boolean(
-      this._fecha(datos.fechaRadicacion) || datos.usuarioRadica || datos.clase || datos.estado
+      this._fecha(datos.fechaRadicacion) ||
+        datos.usuarioRadica ||
+        datos.clase ||
+        datos.estado ||
+        datos.interesado ||
+        datos.telefono ||
+        datos.direccion
     );
   }
 
