@@ -320,12 +320,20 @@ function registrarIpc(contenedor, obtenerVentana) {
 
   ipcMain.handle(CANALES.RADICACIONES_RESUMEN, () => radicacionRepository.resumen());
 
-  ipcMain.handle(CANALES.RADICACIONES_CONFIG, () => ({
-    activo: radicacionRepository.activo(),
-    usuario: radicacionRepository.obtenerEstado('radicaciones.usuario') || '',
-    desde: radicacionRepository.desde(),
-    diagnostico: radicacionRepository.diagnostico(),
-  }));
+  ipcMain.handle(CANALES.RADICACIONES_CONFIG, () => {
+    const anio = String(new Date().getFullYear());
+    const hasta = radicacionRepository.ultimoExplorado(anio);
+    return {
+      activo: radicacionRepository.activo(),
+      usuario: radicacionRepository.obtenerEstado('radicaciones.usuario') || '',
+      desde: radicacionRepository.desde(),
+      diagnostico: radicacionRepository.diagnostico(),
+      // Hasta qué radicado llegó el recorrido: verlo evita el caso en que
+      // el puntero quedó por encima de las radicaciones propias y todo
+      // parecía "no encuentra nada" sin explicación.
+      revisadoHasta: hasta === null ? '' : `${anio}-${hasta}`,
+    };
+  });
 
   ipcMain.handle(CANALES.RADICACIONES_GUARDAR_CONFIG, (_evento, { activo, usuario, desde }) => {
     try {

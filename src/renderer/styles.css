@@ -537,6 +537,18 @@ body {
 
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
 
+/* Fila para volver a recorrer los radicados desde un número dado. */
+.filtros-revisar { gap: 8px; }
+.filtros-revisar input {
+  width: 130px;
+  border: 1px solid var(--color-borde);
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 13px;
+  background: var(--color-campo);
+  color: var(--color-texto);
+}
+
 .chip {
   border: 1px solid var(--color-borde);
   background: var(--color-panel);

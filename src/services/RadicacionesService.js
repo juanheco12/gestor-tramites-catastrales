@@ -1,7 +1,13 @@
 'use strict';
 
-/** Números seguidos sin existir que se toman como "llegué al final". */
-const TOLERANCIA_HUECOS = 4;
+/**
+ * Números seguidos sin existir ("TRÁMITE NO ENCONTRADO") que se toman como
+ * "llegué al final de la numeración". Con 4 alcanzaba para el final real,
+ * pero un hueco algo más largo en el medio (radicados anulados, saltos del
+ * aplicativo) cortaba el recorrido antes de tiempo y dejaba afuera lo que
+ * venía después.
+ */
+const TOLERANCIA_HUECOS = 12;
 /**
  * Tope de consultas por corrida. Solo se acerca a este número la PRIMERA
  * vez (hay que ubicar el tope de radicados de la oficina partiendo de cero);
@@ -96,9 +102,18 @@ class RadicacionesService {
       }
     }
 
+    const desdeDonde = ultimo + 1;
     const recorrido = await this._recorrerHaciaArriba(page, anio, ultimo, usuario, contador);
     nuevas += recorrido.nuevas;
-    return { nuevas, consultas: contador.consultas, usuario, corte: recorrido.corte };
+    return {
+      nuevas,
+      consultas: contador.consultas,
+      usuario,
+      corte: recorrido.corte,
+      anio,
+      desdeDonde,
+      hastaDonde: this.repo.ultimoExplorado(anio),
+    };
   }
 
   /** Número de arranque configurado por el usuario ("2026-7272" -> 7272), si es de este año. */
@@ -115,13 +130,21 @@ class RadicacionesService {
     if (r.omitido === 'sin-punto-de-partida') {
       return 'No se pudo ubicar el último radicado de la oficina. Indique en Mi perfil un radicado suyo desde el cual empezar.';
     }
-    if (r.nuevas > 0) return `${r.nuevas} radicación(es) nuevas detectadas (${r.consultas} consultas).`;
+    // Decir SIEMPRE desde y hasta qué radicado se revisó: "4 consultas" no
+    // dejaba ver que el recorrido ya venía parado más allá de las
+    // radicaciones del usuario, que era justamente el problema.
+    const tramo = `revisado ${r.anio}-${r.desdeDonde} en adelante`;
+    if (r.nuevas > 0) return `${r.nuevas} radicación(es) nuevas detectadas (${tramo}).`;
     // Si el recorrido se cortó por fallas al consultar, decirlo: antes esto
     // se veía igual que "revisé y no había nada suyo", que es muy distinto.
     if (r.corte === 'errores') {
       return `No se pudo leer la consulta de trámites: ${this.consulta.ultimoProblema || 'motivo desconocido'}`;
     }
-    return `Sin radicaciones nuevas a nombre de "${r.usuario}" (${r.consultas} consultas revisadas).`;
+    const base = `Sin radicaciones nuevas a nombre de "${r.usuario}" (${tramo}).`;
+    // La sugerencia solo tiene sentido mientras no se haya detectado NADA:
+    // ahí es cuando el puntero suele estar por encima de lo que se busca.
+    if (this.repo.listar({ limite: 1 }).length > 0) return base;
+    return `${base} Si las suyas son ANTERIORES a ese número, use "Volver a revisar" para retroceder.`;
   }
 
   /**

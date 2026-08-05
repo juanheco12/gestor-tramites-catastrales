@@ -684,12 +684,35 @@ async function cargarRadicaciones() {
   aviso.textContent = config.diagnostico || '';
   aviso.classList.toggle('oculto', !config.diagnostico);
 
+  document.getElementById('radicaciones-hasta').textContent = config.revisadoHasta
+    ? `Revisado hasta el ${config.revisadoHasta}`
+    : 'Todavía no se ha revisado ningún radicado';
+  const campoRehacer = document.getElementById('radicaciones-rehacer-desde');
+  if (!campoRehacer.value) campoRehacer.value = config.desde || '';
+
   pintarRadicaciones();
 }
 
 buscadorRadicaciones.addEventListener('input', () => {
   textoRadicaciones = buscadorRadicaciones.value.trim().toLowerCase();
   pintarRadicaciones();
+});
+
+// Reiniciar el recorrido tenía que hacerse volviendo a guardar un campo en
+// Mi perfil: quedaba escondido justo cuando era lo que hacía falta.
+document.getElementById('btn-rehacer-radicaciones').addEventListener('click', async () => {
+  const desde = document.getElementById('radicaciones-rehacer-desde').value.trim();
+  const config = await window.bandejaApi.radicacionesConfig();
+  const r = await window.bandejaApi.radicacionesGuardarConfig(true, config.usuario, desde);
+  if (!r.ok) {
+    mostrarEstado('error', r.error);
+    return;
+  }
+  mostrarEstado(
+    'exito',
+    `Listo: se revisará de nuevo desde el ${desde}. Pulse Sincronizar (puede tardar según cuántos radicados haya que recorrer).`
+  );
+  await cargarRadicaciones();
 });
 
 // Reemplaza el paso manual de ir copiando cada radicado al Excel.
