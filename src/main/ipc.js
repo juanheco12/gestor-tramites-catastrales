@@ -332,6 +332,7 @@ function registrarIpc(contenedor, obtenerVentana) {
       // el puntero quedó por encima de las radicaciones propias y todo
       // parecía "no encuentra nada" sin explicación.
       revisadoHasta: hasta === null ? '' : `${anio}-${hasta}`,
+      traza: radicacionRepository.obtenerEstado('radicaciones.traza') || '',
     };
   });
 

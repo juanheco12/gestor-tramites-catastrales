@@ -54,6 +54,11 @@ class RadicacionesService {
     this.consulta = consultaTramite;
     this.logger = logger;
     this.onProgreso = onProgreso;
+    // Traza de las últimas consultas (qué número se pidió y qué nombre se
+    // leyó). Se muestra en pantalla: es la única forma de ver si el problema
+    // está en el número que se busca, en la lectura del nombre, o en la
+    // comparación, sin tener que suponerlo.
+    this.muestras = [];
   }
 
   /**
@@ -64,7 +69,9 @@ class RadicacionesService {
    * @returns {Promise<{nuevas: number, consultas: number, omitido?: string}>}
    */
   async detectar(page, { numerosConocidos = [] } = {}) {
+    this.muestras = [];
     const resultado = await this._detectar(page, { numerosConocidos });
+    this.repo.guardarEstado('radicaciones.traza', this.muestras.join(' · '));
     // Queda registrado SIEMPRE, también cuando no hizo nada: una tabla vacía
     // sin explicación es lo que hizo perder tiempo antes.
     this.repo.guardarDiagnostico(this._explicar(resultado));
@@ -241,6 +248,7 @@ class RadicacionesService {
         continue;
       }
       erroresSeguidos = 0;
+      this._anotarMuestra(anio, numero, datos, usuario);
 
       if (!datos.existe) {
         huecosSeguidos++;
@@ -263,6 +271,21 @@ class RadicacionesService {
       this.repo.guardarUltimoExplorado(anio, ultimoConfirmado);
     }
     return { nuevas, corte };
+  }
+
+  /** Guarda una muestra de lo consultado, para poder mostrarla en pantalla. */
+  _anotarMuestra(anio, numero, datos, usuario) {
+    if (this.muestras.length >= 6) return;
+    if (datos === null) {
+      this.muestras.push(`${anio}-${numero}: no se pudo consultar`);
+      return;
+    }
+    if (!datos.existe) {
+      this.muestras.push(`${anio}-${numero}: no existe`);
+      return;
+    }
+    const coincide = this._esDelUsuario(datos.usuarioRadica, usuario) ? 'SÍ' : 'no';
+    this.muestras.push(`${anio}-${numero}: radicó "${datos.usuarioRadica}" (¿suyo? ${coincide})`);
   }
 
   async _consultar(page, anio, numero, contador) {

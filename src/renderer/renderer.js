@@ -684,6 +684,12 @@ async function cargarRadicaciones() {
   aviso.textContent = config.diagnostico || '';
   aviso.classList.toggle('oculto', !config.diagnostico);
 
+  // Traza de las últimas consultas: deja ver si el problema está en el número
+  // que se busca, en el nombre que se lee, o en la comparación.
+  const traza = document.getElementById('radicaciones-traza');
+  traza.textContent = config.traza ? `Últimas consultas → ${config.traza}` : '';
+  traza.classList.toggle('oculto', !config.traza);
+
   document.getElementById('radicaciones-hasta').textContent = config.revisadoHasta
     ? `Revisado hasta el ${config.revisadoHasta}`
     : 'Todavía no se ha revisado ningún radicado';
