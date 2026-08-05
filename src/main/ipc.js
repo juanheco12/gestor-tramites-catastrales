@@ -28,6 +28,7 @@ const CANALES = {
   RADICACIONES_GUARDAR_CONFIG: 'radicaciones:guardar-config',
   APP_VERSION: 'app:version',
   APP_BUSCAR_ACTUALIZACION: 'app:buscar-actualizacion',
+  GENERAR_ACTA: 'bandeja:generar-acta',
 };
 
 /**
@@ -47,6 +48,7 @@ function registrarIpc(contenedor, obtenerVentana) {
     radicacionRepository,
     importService,
     credencialesService,
+    actaService,
     logger,
   } = contenedor;
 
@@ -279,6 +281,52 @@ function registrarIpc(contenedor, obtenerVentana) {
       return { ok: true, ruta };
     } catch (error) {
       logger.error(`IPC exportar: ${error.message}`);
+      return { ok: false, error: error.message };
+    }
+  });
+
+  /* ------------------------- acta de visita ------------------------- */
+
+  ipcMain.handle(CANALES.GENERAR_ACTA, async (_evento, tramiteId) => {
+    try {
+      const tramite = gestionRepository
+        .listarConGestion()
+        .find((t) => t.id === tramiteId);
+      if (!tramite) throw new Error('No se encontró el trámite.');
+
+      // El acta pide teléfono, e-mail y dirección del interesado, que NO están
+      // en la bandeja: solo en "Consulta de trámite". Se consultan al momento
+      // (una sola consulta). Si algo falla, el acta se genera igual con lo que
+      // haya y se avisa qué campos quedaron en blanco: es mejor entregar el
+      // acta con un dato para llenar a mano que no entregarla.
+      let interesado = {};
+      if (!syncService.enEjecucion) {
+        try {
+          const page = await syncService.browserManager.abrirBandejaAutenticada({
+            interactivo: false,
+          });
+          const datos = await syncService.consultaTramite.consultar(page, tramite.numero_tramite);
+          if (datos && datos.existe) {
+            interesado = {
+              nombre: datos.interesado,
+              telefono: datos.telefono,
+              email: datos.email,
+              direccion: datos.direccion,
+            };
+          }
+        } catch (error) {
+          logger.warn(`Acta ${tramite.numero_tramite}: sin datos del interesado (${error.message}).`);
+        } finally {
+          await syncService.browserManager.cerrar().catch(() => {});
+        }
+      }
+
+      const faltantes = actaService.camposFaltantes(tramite, interesado);
+      const ruta = await actaService.generar(tramite, interesado);
+      shell.openPath(ruta);
+      return { ok: true, ruta, faltantes };
+    } catch (error) {
+      logger.error(`IPC generar acta: ${error.message}`);
       return { ok: false, error: error.message };
     }
   });

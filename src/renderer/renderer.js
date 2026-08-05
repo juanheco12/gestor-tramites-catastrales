@@ -755,6 +755,7 @@ function abrirFicha(tramiteId) {
   fichaTramiteId = tramiteId;
 
   document.getElementById('ficha-titulo').textContent = `Trámite ${t.numero_tramite}`;
+  document.getElementById('ficha-acta-estado').textContent = '';
 
   const extra = extraDe(t);
   // "..." al final = el propio aplicativo (no nuestro sistema) ya recorta
@@ -804,6 +805,29 @@ function abrirFicha(tramiteId) {
 
 document.getElementById('ficha-cancelar').addEventListener('click', () => {
   modalFicha.classList.add('oculto');
+});
+
+document.getElementById('ficha-acta').addEventListener('click', async () => {
+  if (fichaTramiteId === null) return;
+  const boton = document.getElementById('ficha-acta');
+  const aviso = document.getElementById('ficha-acta-estado');
+  boton.disabled = true;
+  // Los datos de contacto se consultan en edis al momento, así que puede
+  // tardar unos segundos: sin este aviso parece que el botón no hizo nada.
+  aviso.textContent = 'Generando el acta y buscando los datos del interesado en edis...';
+  try {
+    const r = await window.bandejaApi.generarActa(fichaTramiteId);
+    if (!r.ok) {
+      aviso.textContent = `No se pudo generar: ${r.error}`;
+      return;
+    }
+    aviso.textContent =
+      r.faltantes.length > 0
+        ? `Acta generada. Complete a mano: ${r.faltantes.join(', ')}.`
+        : 'Acta generada y abierta en Word.';
+  } finally {
+    boton.disabled = false;
+  }
 });
 
 document.getElementById('ficha-eliminar').addEventListener('click', async () => {

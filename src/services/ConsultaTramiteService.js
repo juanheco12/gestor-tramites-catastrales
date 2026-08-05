@@ -298,6 +298,12 @@ function LECTOR_FICHA() {
     clase: leer('Clase'),
     npn: leer('NPN'),
     interesado: leer('Nombre'),
+    // Datos de contacto del interesado: son los que el acta de visita pide y
+    // que no están en la bandeja.
+    direccion: leer('Dirección'),
+    ciudad: leer('Ciudad'),
+    telefono: leer('Teléfono'),
+    email: leer('Email'),
     fechaEnvioRevision: leer('Fecha envío a revisión'),
     estado: leer('Estado del trámite'),
     radiografia: usuarioRadica ? '' : radiografia(),
@@ -466,6 +472,10 @@ class ConsultaTramiteService {
         clase: datos.clase || '',
         npn: datos.npn || '',
         interesado: datos.interesado || '',
+        direccion: datos.direccion || '',
+        ciudad: datos.ciudad || '',
+        telefono: datos.telefono || '',
+        email: datos.email || '',
         fechaEnvioRevision: this._fecha(datos.fechaEnvioRevision),
       };
     } catch (error) {
