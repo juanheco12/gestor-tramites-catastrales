@@ -281,7 +281,19 @@ class RadicacionesService {
       return;
     }
     if (!datos.existe) {
-      this.muestras.push(`${anio}-${numero}: no existe`);
+      // Si edis SÍ tenía la ficha en pantalla pero no se entendió ningún
+      // campo, "no existe" es engañoso. Se muestra qué se leyó de verdad:
+      //  - pares etiqueta=valor => la ficha se leyó pero no coinciden los
+      //    nombres de los campos que busco;
+      //  - solo etiquetas sin valor => encuentro las filas pero leo mal el
+      //    valor;
+      //  - nada => la ficha no estaba (ese radicado no existe de verdad).
+      const pares = this.consulta.ultimosPares || [];
+      const filas = this.consulta.ultimoTotalFilas || 0;
+      let pista = '';
+      if (pares.length > 0) pista = ` [ficha leída: ${pares.slice(0, 6).join(' | ')}]`;
+      else if (filas > 0) pista = ` [${filas} filas en pantalla, todas sin valor]`;
+      this.muestras.push(`${anio}-${numero}: no existe${pista}`);
       return;
     }
     const coincide = this._esDelUsuario(datos.usuarioRadica, usuario) ? 'SÍ' : 'no';

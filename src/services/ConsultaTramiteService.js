@@ -133,10 +133,11 @@ function UBICAR_FORMULARIO() {
 /**
  * Lee los campos de la ficha del trámite. Corre DENTRO del navegador.
  *
- * Se recorre la página en orden de lectura armando una secuencia de
- * etiquetas y campos. Buscar "la celda de al lado" no sirve: la página anida
- * tablas, así que el textContent de una celda de afuera se traga el bloque
- * entero y nunca coincide con la etiqueta exacta.
+ * La ficha está armada como filas de tabla: una celda con la etiqueta
+ * ("Usuario que radica") y la de al lado con un input que trae el valor. Esa
+ * es la vía principal, porque no depende de cómo esté anidado el resto de la
+ * página. Si alguna etiqueta no aparece así, se cae a un segundo método que
+ * recorre la página en orden de lectura emparejando etiqueta -> campo.
  */
 function LECTOR_FICHA() {
   const normalizar = (t) =>
@@ -148,6 +149,35 @@ function LECTOR_FICHA() {
       .trim()
       .replace(/:$/, '');
 
+  const valorDe = (contenedor) => {
+    const campo = contenedor.querySelector('input, textarea, select');
+    if (campo) {
+      const tipo = (campo.getAttribute('type') || '').toLowerCase();
+      if (tipo === 'image' || tipo === 'submit' || tipo === 'button') return null;
+      return (campo.value || '').trim();
+    }
+    return null;
+  };
+
+  // --- Método 1: fila de tabla (etiqueta | valor) ---
+  const porFila = {};
+  for (const fila of document.querySelectorAll('tr')) {
+    const celdas = fila.children;
+    if (celdas.length < 2) continue;
+    const etiqueta = normalizar(celdas[0].innerText || celdas[0].textContent);
+    if (!etiqueta || etiqueta.length > 60) continue;
+    for (let j = 1; j < celdas.length; j++) {
+      const valor = valorDe(celdas[j]);
+      if (valor !== null) {
+        // La primera fila que use esa etiqueta manda: más abajo puede
+        // repetirse en otra sección con otro sentido.
+        if (!(etiqueta in porFila)) porFila[etiqueta] = valor;
+        break;
+      }
+    }
+  }
+
+  // --- Método 2 (respaldo): orden de lectura, etiqueta -> siguiente campo ---
   const secuencia = [];
   const recorrer = (nodo) => {
     for (const hijo of nodo.children) {
@@ -159,8 +189,6 @@ function LECTOR_FICHA() {
         }
         continue;
       }
-      // Texto PROPIO del elemento (sin lo que aportan sus hijos): es lo que
-      // distingue una etiqueta real de un contenedor.
       const propio = Array.from(hijo.childNodes)
         .filter((n) => n.nodeType === 3)
         .map((n) => n.textContent)
@@ -172,16 +200,20 @@ function LECTOR_FICHA() {
   };
   recorrer(document.body);
 
-  const leer = (etiqueta) => {
-    const objetivo = normalizar(etiqueta);
+  const porSecuencia = (objetivo) => {
     for (let i = 0; i < secuencia.length; i++) {
       if (secuencia[i].campo || secuencia[i].texto !== objetivo) continue;
-      // El valor es el primer campo que aparece después de la etiqueta.
       for (let j = i + 1; j < secuencia.length && j <= i + 4; j++) {
         if (secuencia[j].campo) return secuencia[j].valor;
       }
     }
     return '';
+  };
+
+  const leer = (etiqueta) => {
+    const objetivo = normalizar(etiqueta);
+    if (porFila[objetivo]) return porFila[objetivo];
+    return porSecuencia(objetivo);
   };
 
   return {
@@ -192,8 +224,16 @@ function LECTOR_FICHA() {
     interesado: leer('Nombre'),
     fechaEnvioRevision: leer('Fecha envío a revisión'),
     estado: leer('Estado del trámite'),
-    // Para diagnosticar si la lectura falla: qué etiquetas se vieron.
-    etiquetas: secuencia.filter((s) => !s.campo).map((s) => s.texto).slice(0, 60),
+    // Para diagnosticar si la lectura falla. Se devuelven PARES
+    // etiqueta=valor, no solo etiquetas: así se distingue "no encontré la
+    // etiqueta" (estructura distinta) de "la encontré pero el valor vino
+    // vacío" (leo el campo equivocado), que necesitan arreglos distintos.
+    etiquetas: Object.keys(porFila).slice(0, 60),
+    pares: Object.entries(porFila)
+      .filter(([, v]) => v)
+      .slice(0, 10)
+      .map(([k, v]) => `${k}=${String(v).slice(0, 40)}`),
+    totalFilas: Object.keys(porFila).length,
   };
 }
 
@@ -311,11 +351,17 @@ class ConsultaTramiteService {
 
       // Sondeo hasta que la ficha traiga algo (ver ESPERA_RESULTADO_MS).
       const limite = Date.now() + ESPERA_RESULTADO_MS;
-      let datos = await page.evaluate(LECTOR_FICHA);
+      let datos = await this._leerFicha(page);
       while (!this._tieneAlgo(datos) && Date.now() < limite) {
         await page.waitForTimeout(400);
-        datos = await page.evaluate(LECTOR_FICHA);
+        datos = await this._leerFicha(page);
       }
+      // Queda a la vista de quien orquesta: si la ficha no se pudo leer, la
+      // traza en pantalla muestra estas etiquetas en vez de dejar "no existe"
+      // sin explicación.
+      this.ultimasEtiquetas = datos.etiquetas || [];
+      this.ultimosPares = datos.pares || [];
+      this.ultimoTotalFilas = datos.totalFilas || 0;
 
       const fechaRadicacion = this._fecha(datos.fechaRadicacion);
       const existe = this._tieneAlgo(datos);
@@ -359,6 +405,26 @@ class ConsultaTramiteService {
   async consultarFechaEnvio(page, numeroTramite) {
     const datos = await this.consultar(page, numeroTramite);
     return datos && datos.fechaEnvioRevision ? datos.fechaEnvioRevision : null;
+  }
+
+  /**
+   * Lee la ficha probando en TODOS los marcos de la página, no solo el
+   * principal: si el detalle del trámite vive dentro de un frame, mirar solo
+   * el documento de arriba devuelve todo vacío (o sea "no existe") para
+   * cualquier radicado. Se queda con el primer marco que traiga datos.
+   */
+  async _leerFicha(page) {
+    let mejor = null;
+    for (const marco of page.frames()) {
+      const datos = await marco.evaluate(LECTOR_FICHA).catch(() => null);
+      if (!datos) continue;
+      if (this._tieneAlgo(datos)) return datos;
+      // Se guarda el que más etiquetas haya visto, para el diagnóstico.
+      if (!mejor || (datos.etiquetas || []).length > (mejor.etiquetas || []).length) {
+        mejor = datos;
+      }
+    }
+    return mejor || { fechaRadicacion: '', usuarioRadica: '', clase: '', npn: '', interesado: '', fechaEnvioRevision: '', estado: '', etiquetas: [] };
   }
 
   /**
