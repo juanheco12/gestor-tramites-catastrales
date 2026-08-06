@@ -43,6 +43,150 @@ class ActaService {
     return path.join(path.dirname(this.config.app.dbPath), 'actas');
   }
 
+  /** Reemplaza los marcadores {{...}} de una parte del documento. */
+  _reemplazar(xml, valores) {
+    let salida = xml;
+    let hubo = 0;
+    for (const [marcador, valor] of Object.entries(valores)) {
+      const antes = salida;
+      salida = salida.split(`{{${marcador}}}`).join(this._escapar(valor));
+      if (salida !== antes) hubo++;
+    }
+    return { xml: salida, reemplazos: hubo };
+  }
+
+  /**
+   * Genera UN solo Word con todas las actas, una por hoja, para poder
+   * imprimirlas de una vez en lugar de abrir un archivo por trámite.
+   *
+   * El radicado va en el ENCABEZADO, y en Word el encabezado es propio de cada
+   * SECCIÓN, no de cada página: por eso no alcanza con pegar las actas una
+   * detrás de otra (todas mostrarían el mismo radicado arriba). Se crea una
+   * sección por acta, cada una con su propio encabezado. El salto de sección
+   * por omisión ya empieza en página nueva, y como cada sección reinicia la
+   * numeración, el pie sigue diciendo "Página 1 de 1" igual que las
+   * individuales.
+   *
+   * @param {Array<{tramite: object, interesado: object}>} items
+   * @returns {Promise<string>} ruta del archivo generado
+   */
+  async generarUnido(items) {
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error('No hay trámites para generar el documento.');
+    }
+    if (!fs.existsSync(this.rutaPlantilla)) {
+      throw new Error(
+        `No se encontró la plantilla del acta en ${this.rutaPlantilla}. ` +
+        'Puede indicar otra en config/app.config.json (acta.plantilla).'
+      );
+    }
+
+    const zip = await JSZip.loadAsync(fs.readFileSync(this.rutaPlantilla));
+    const leer = async (parte) => {
+      const f = zip.file(parte);
+      if (!f) throw new Error(`La plantilla no tiene la parte ${parte}.`);
+      return f.async('string');
+    };
+
+    const docXml = await leer('word/document.xml');
+    let relsXml = await leer('word/_rels/document.xml.rels');
+    let tiposXml = await leer('[Content_Types].xml');
+
+    // --- Cuerpo y propiedades de sección de la plantilla ---
+    const cuerpo = docXml.match(/<w:body>([\s\S]*)<\/w:body>/);
+    if (!cuerpo) throw new Error('No se encontró el cuerpo del documento en la plantilla.');
+    const sect = cuerpo[1].match(/<w:sectPr[\s\S]*<\/w:sectPr>\s*$/);
+    if (!sect) throw new Error('La plantilla no tiene propiedades de sección (sectPr).');
+    const sectPrBase = sect[0];
+    const contenidoBase = cuerpo[1].slice(0, sect.index);
+
+    // --- Encabezado al que apunta la sección (no se supone que sea header1) ---
+    const refEncabezado = sectPrBase.match(/<w:headerReference[^>]*r:id="([^"]+)"/);
+    if (!refEncabezado) throw new Error('La sección de la plantilla no referencia ningún encabezado.');
+    const destino = relsXml.match(
+      new RegExp(`<Relationship[^>]*Id="${refEncabezado[1]}"[^>]*Target="([^"]+)"`)
+    );
+    if (!destino) throw new Error(`No se encontró la relación ${refEncabezado[1]} del encabezado.`);
+    const parteEncabezado = `word/${destino[1].replace(/^\/?word\//, '')}`;
+    const encabezadoBase = await leer(parteEncabezado);
+    const relsEncabezado = zip.file(`word/_rels/${path.basename(parteEncabezado)}.rels`);
+    const relsEncabezadoXml = relsEncabezado ? await relsEncabezado.async('string') : null;
+
+    // Siguiente rId libre: hay que no chocar con los que ya existen.
+    let siguienteId = 1 + Math.max(
+      0,
+      ...[...relsXml.matchAll(/Id="rId(\d+)"/g)].map((m) => Number(m[1]))
+    );
+
+    const bloques = [];
+    let reemplazosTotales = 0;
+
+    for (let i = 0; i < items.length; i++) {
+      const { tramite, interesado = {} } = items[i];
+      const valores = this._valores(tramite, interesado);
+
+      // Encabezado propio de esta acta, con SU radicado.
+      const nombreParte = `word/headerActa${i + 1}.xml`;
+      const rId = `rId${siguienteId++}`;
+      const encabezado = this._reemplazar(encabezadoBase, valores);
+      zip.file(nombreParte, encabezado.xml);
+      if (relsEncabezadoXml) {
+        // Mismas relaciones que el original: apuntan a los logos por ruta
+        // relativa, así que la copia sirve tal cual.
+        zip.file(`word/_rels/headerActa${i + 1}.xml.rels`, relsEncabezadoXml);
+      }
+      relsXml = relsXml.replace(
+        '</Relationships>',
+        `<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="headerActa${i + 1}.xml"/></Relationships>`
+      );
+      tiposXml = tiposXml.replace(
+        '</Types>',
+        `<Override PartName="/${nombreParte}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>`
+      );
+
+      const contenido = this._reemplazar(contenidoBase, valores);
+      reemplazosTotales += contenido.reemplazos + encabezado.reemplazos;
+
+      // La sección de esta acta apunta a SU encabezado.
+      const sectPr = sectPrBase.replace(
+        /(<w:headerReference[^>]*r:id=")[^"]*(")/g,
+        `$1${rId}$2`
+      );
+
+      if (i < items.length - 1) {
+        // Salto de sección intermedio: va en el pPr de un párrafo al cierre
+        // de la sección, que es como Word representa el corte.
+        bloques.push(`${contenido.xml}<w:p><w:pPr>${sectPr}</w:pPr></w:p>`);
+      } else {
+        // La última sección se declara al final del cuerpo.
+        bloques.push(`${contenido.xml}${sectPr}`);
+      }
+    }
+
+    if (reemplazosTotales === 0) {
+      throw new Error(
+        'La plantilla no tiene ningún marcador {{...}}: no se pudo llenar el acta. ' +
+        'Revise que sea la plantilla correcta.'
+      );
+    }
+
+    zip.file('word/document.xml', docXml.replace(
+      /<w:body>[\s\S]*<\/w:body>/,
+      `<w:body>${bloques.join('')}</w:body>`
+    ));
+    zip.file('word/_rels/document.xml.rels', relsXml);
+    zip.file('[Content_Types].xml', tiposXml);
+
+    fs.mkdirSync(this.carpetaSalida, { recursive: true });
+    const hoy = new Date();
+    const sello = `${String(hoy.getDate()).padStart(2, '0')}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${hoy.getFullYear()}`;
+    const destinoArchivo = path.join(this.carpetaSalida, `ACTAS DE VISITA (${items.length}) ${sello}.docx`);
+    fs.writeFileSync(destinoArchivo, await zip.generateAsync({ type: 'nodebuffer' }));
+
+    this.logger.info(`Actas de visita en un solo documento: ${destinoArchivo} (${items.length} hojas)`);
+    return destinoArchivo;
+  }
+
   /**
    * @param {object} tramite Fila de listarConGestion (trámite + gestión)
    * @param {{nombre?: string, telefono?: string, email?: string, direccion?: string}} [interesado]

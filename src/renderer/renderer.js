@@ -885,10 +885,12 @@ document.getElementById('actas-generar').addEventListener('click', async () => {
     return;
   }
 
+  const unido = document.getElementById('actas-unido').checked;
+
   boton.disabled = true;
   actasEstado.textContent = 'Preparando...';
   try {
-    const r = await window.bandejaApi.generarActasLote({ modo, radicados });
+    const r = await window.bandejaApi.generarActasLote({ modo, radicados, unido });
     if (!r.ok) {
       actasEstado.textContent = `No se pudo generar: ${r.error}`;
       return;
@@ -900,7 +902,12 @@ document.getElementById('actas-generar').addEventListener('click', async () => {
       return;
     }
 
-    const partes = [`${r.generadas.length + r.incompletas.length} de ${r.total} acta(s) generada(s).`];
+    const hechas = r.generadas.length + r.incompletas.length;
+    const partes = [
+      r.archivoUnico
+        ? `${hechas} acta(s) en un solo Word, una por hoja.`
+        : `${hechas} de ${r.total} acta(s) generada(s).`,
+    ];
     if (r.incompletas.length > 0) {
       partes.push(`${r.incompletas.length} quedaron con datos por llenar a mano (${r.incompletas[0].motivo || 'sin datos en edis'}).`);
     }
@@ -911,7 +918,8 @@ document.getElementById('actas-generar').addEventListener('click', async () => {
       partes.push(`No están en el sistema: ${r.noEncontrados.join(', ')}.`);
     }
     actasEstado.textContent = partes.join(' ');
-    mostrarEstado('exito', `Actas de visita: ${partes.join(' ')} Carpeta: ${r.carpeta}`);
+    mostrarEstado('exito',
+      `Actas de visita: ${partes.join(' ')} ${r.archivoUnico ? `Archivo: ${r.archivoUnico}` : `Carpeta: ${r.carpeta}`}`);
   } finally {
     boton.disabled = false;
   }

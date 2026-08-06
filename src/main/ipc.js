@@ -339,7 +339,7 @@ function registrarIpc(contenedor, obtenerVentana) {
    * ventanas de Word. Al final se abre la CARPETA.
    */
   ipcMain.handle(CANALES.GENERAR_ACTAS_LOTE, async (_evento, opciones) => {
-    const { modo = 'visitas', radicados = [] } = opciones || {};
+    const { modo = 'visitas', radicados = [], unido = false } = opciones || {};
     try {
       const todos = gestionRepository.listarConGestion();
       const porNumero = new Map(todos.map((t) => [String(t.numero_tramite).trim(), t]));
@@ -384,6 +384,7 @@ function registrarIpc(contenedor, obtenerVentana) {
           incompletas: [],
           fallidas: [],
           noEncontrados,
+          archivoUnico: '',
           carpeta: actaService.carpetaSalida,
         };
       }
@@ -393,6 +394,7 @@ function registrarIpc(contenedor, obtenerVentana) {
       const fallidas = [];
       let page = null;
       let motivoSinNavegador = '';
+      let archivoUnico = '';
 
       if (syncService.enEjecucion) {
         motivoSinNavegador = 'hay una sincronización en curso';
@@ -418,10 +420,15 @@ function registrarIpc(contenedor, obtenerVentana) {
           }
         }
 
+        // Cuando se pide un solo Word, primero se leen TODOS los interesados y
+        // al final se arma un único documento: así el navegador se usa una sola
+        // vez y el archivo se escribe una sola vez.
+        const paraUnir = [];
+
         for (let i = 0; i < seleccionados.length; i++) {
           const tramite = seleccionados[i];
           notificar('acta-lote', {
-            mensaje: `Generando acta ${i + 1} de ${seleccionados.length} (${tramite.numero_tramite})...`,
+            mensaje: `Leyendo datos ${i + 1} de ${seleccionados.length} (${tramite.numero_tramite})...`,
             hechas: i,
             total: seleccionados.length,
           });
@@ -434,26 +441,51 @@ function registrarIpc(contenedor, obtenerVentana) {
             motivo = leido.motivo;
           }
 
+          const faltantes = actaService.camposFaltantes(tramite, interesado);
+          if (faltantes.length > 0) {
+            incompletas.push({ radicado: tramite.numero_tramite, faltantes, motivo });
+          } else {
+            generadas.push(tramite.numero_tramite);
+          }
+
+          if (unido) {
+            paraUnir.push({ tramite, interesado });
+            continue;
+          }
+
           try {
-            const faltantes = actaService.camposFaltantes(tramite, interesado);
             await actaService.generar(tramite, interesado);
-            if (faltantes.length > 0) {
-              incompletas.push({ radicado: tramite.numero_tramite, faltantes, motivo });
-            } else {
-              generadas.push(tramite.numero_tramite);
-            }
           } catch (error) {
             // Un trámite que falla no debe abortar el lote: se anota y se sigue.
             logger.error(`Acta ${tramite.numero_tramite}: ${error.message}`);
             fallidas.push({ radicado: tramite.numero_tramite, error: error.message });
+            // Ya se contó arriba; se saca de donde quedó para no contarla dos veces.
+            const quitar = (lista) => {
+              const j = lista.findIndex((x) => (x.radicado || x) === tramite.numero_tramite);
+              if (j >= 0) lista.splice(j, 1);
+            };
+            quitar(generadas);
+            quitar(incompletas);
           }
+        }
+
+        if (unido && paraUnir.length > 0) {
+          notificar('acta-lote', {
+            mensaje: `Armando el documento con ${paraUnir.length} acta(s)...`,
+            hechas: paraUnir.length,
+            total: paraUnir.length,
+          });
+          archivoUnico = await actaService.generarUnido(paraUnir);
         }
       } finally {
         syncService.enEjecucion = false;
         await syncService.browserManager.cerrar().catch(() => {});
       }
 
-      if (generadas.length + incompletas.length > 0) shell.openPath(actaService.carpetaSalida);
+      // Un solo archivo se abre directamente (es el que se va a imprimir);
+      // si son varios, se abre la carpeta y no 20 ventanas de Word.
+      if (archivoUnico) shell.openPath(archivoUnico);
+      else if (generadas.length + incompletas.length > 0) shell.openPath(actaService.carpetaSalida);
 
       return {
         ok: true,
@@ -462,6 +494,7 @@ function registrarIpc(contenedor, obtenerVentana) {
         incompletas,
         fallidas,
         noEncontrados,
+        archivoUnico,
         carpeta: actaService.carpetaSalida,
       };
     } catch (error) {

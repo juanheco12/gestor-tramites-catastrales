@@ -588,6 +588,11 @@ body {
   accent-color: var(--color-primario);
 }
 
+/* La casilla de "un solo Word" no es una alternativa entre las dos de arriba,
+   sino un ajuste de cómo se entrega: se separa para que no se lea como una
+   tercera opción del mismo grupo. */
+.modal-caja .opcion-unido { border-style: dashed; }
+
 .opcion-cuerpo { display: flex; flex-direction: column; gap: 2px; }
 .opcion-titulo { font-size: 13px; font-weight: 600; }
 .opcion-detalle { font-size: 11px; color: var(--color-texto-secundario); }
