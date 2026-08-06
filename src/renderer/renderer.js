@@ -1041,9 +1041,18 @@ btnImportar.addEventListener('click', async () => {
       const reglas = respuesta.reglas
         ? ` Estados aplicados: ${respuesta.reglas.aVisita} a Visita, ${respuesta.reglas.aEstudiado} a Estudiado.`
         : '';
+      // Hojas que son listas de predios por visitar (radicado + sector +
+      // observación, sin fechas): se avisa aparte para que quede claro por qué
+      // esos trámites quedaron en Visita sin decirlo fila por fila.
+      const listas = Object.entries(r.hojas)
+        .filter(([, res]) => res.esListaDeVisitas)
+        .map(([hoja]) => hoja);
+      const visitas = listas.length > 0
+        ? ` Se tomó como lista de visitas: ${listas.join(', ')} (${r.marcadosVisita || 0} trámites marcados para visita).`
+        : '';
       mostrarEstado('exito',
         `Importación completada (${r.tramitesCreados} trámites nuevos, ` +
-        `${r.gestionesCompletadas} fichas completadas). Filas por hoja: ${hojas}.${reglas}`);
+        `${r.gestionesCompletadas} fichas completadas). Filas por hoja: ${hojas}.${visitas}${reglas}`);
     } else if (respuesta.cancelado) {
       mostrarEstado('progreso', 'Importación cancelada.');
     } else {

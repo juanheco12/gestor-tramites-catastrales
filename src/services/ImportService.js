@@ -222,17 +222,44 @@ class ImportService {
   }
 
   /**
+   * ¿Esta hoja es una LISTA DE VISITAS en vez de una bitácora completa?
+   *
+   * El personal que solo programa visitas no lleva bitácora: anota apenas el
+   * radicado, el sector y una observación, y para él relacionar un radicado ya
+   * significa "hay que ir a verlo". Una bitácora, en cambio, siempre trae el
+   * avance del trámite: fecha de realización, fecha de envío y/o estado.
+   *
+   * Esa ausencia es la señal, y es confiable: en la bitácora real de la
+   * oficina los 1377 trámites importados traen las tres cosas, así que una
+   * hoja sin ninguna de ellas no puede ser una bitácora.
+   */
+  _esHojaDeVisitas(col) {
+    if (!col.radicado) return false;
+    const traeAvance = Boolean(col.fecha_realizacion || col.fecha_envio || col.estado);
+    if (traeAvance) return false;
+    // Debe describir algo del predio; una columna sola de radicados no basta.
+    return Boolean(col.sector || col.observacion);
+  }
+
+  /**
    * Deduce el estado propio del ejecutor a partir de los datos de la fila.
    * Orden de prioridad: anulado/no-procede y enviado/tramitado (etapas ya
    * resueltas) primero, luego visita, y por último los valores explícitos
    * de fecha de envío u observación simple que ya traía el sistema.
+   *
+   * @param {object} fila
+   * @param {{hojaDeVisitas?: boolean}} [opciones] hojaDeVisitas=true cuando la
+   *   hoja entera es una lista de predios por visitar (ver _esHojaDeVisitas).
    */
-  _deducirEstado(fila) {
+  _deducirEstado(fila, { hojaDeVisitas = false } = {}) {
     if (normalizar(fila.estado) === 'TRAMITADA') return 'finalizado';
     if (contieneAlguna(fila.observacion, PALABRAS_ANULADO)) return 'finalizado';
     if (contieneAlguna(fila.observacion, PALABRAS_ENVIADO)) return 'enviado';
     if (/VISITA/i.test(fila.prioridad || '') || /VISITA/i.test(fila.observacion || '')) return 'visita';
     if (fila.fecha_envio) return 'enviado';
+    // La hoja completa es una lista de visitas: no hace falta que cada fila
+    // repita la palabra "visita" para que el trámite quede marcado.
+    if (hojaDeVisitas) return 'visita';
     if (fila.observacion) return 'estudiado';
     return null;
   }
@@ -264,7 +291,14 @@ class ImportService {
       if (valor === null || valor === undefined || valor === '') continue;
       const vigente = actual[campo];
       const esEstadoPorDefecto = campo === 'mi_estado' && vigente === 'por_estudiar';
-      if (vigente === null || vigente === undefined || vigente === '' || esEstadoPorDefecto) {
+      // "Visita" es más específico que "Estudiado" y puede pisarlo: si no,
+      // quien ya importó antes (y quedó en Estudiado) nunca vería sus predios
+      // pasar a Visita al reimportar. Los estados ya avanzados (enviado,
+      // devuelto, finalizado) NO se retroceden. Es el mismo criterio que usa
+      // aplicarReglasDeEstado.
+      const asciendeAVisita =
+        campo === 'mi_estado' && valor === 'visita' && vigente === 'estudiado';
+      if (vigente === null || vigente === undefined || vigente === '' || esEstadoPorDefecto || asciendeAVisita) {
         pendientes[campo] = valor;
       }
     }
@@ -289,7 +323,9 @@ class ImportService {
     }
 
     const anioHoja = extraerAnioDeNombreHoja(hoja.name);
+    const hojaDeVisitas = this._esHojaDeVisitas(col);
     let filas = 0;
+    let marcadosVisita = 0;
     for (let n = col.__filaEncabezado + 1; n <= hoja.rowCount; n++) {
       const filaHoja = hoja.getRow(n);
       const leer = (campo) => (col[campo] ? textoCelda(filaHoja.getCell(col[campo])) : '');
@@ -339,6 +375,9 @@ class ImportService {
         resumen
       );
 
+      const estadoDeducido = this._deducirEstado(datos, { hojaDeVisitas });
+      if (estadoDeducido === 'visita') marcadosVisita++;
+
       this._completarGestion(
         id,
         {
@@ -349,7 +388,7 @@ class ImportService {
           analisis: datos.analisis,
           sector: datos.sector,
           prioridad: datos.prioridad,
-          mi_estado: this._deducirEstado(datos),
+          mi_estado: estadoDeducido,
           // Se conserva la nota literal que el ejecutor escribía a mano
           // (p. ej. "TRAMITADA", "EN REVISION"), separada del estado
           // interno del sistema.
@@ -360,8 +399,12 @@ class ImportService {
       filas++;
     }
 
+    if (hojaDeVisitas) resumen.marcadosVisita = (resumen.marcadosVisita || 0) + marcadosVisita;
+
     return {
       importadas: filas,
+      esListaDeVisitas: hojaDeVisitas,
+      marcadosVisita: hojaDeVisitas ? marcadosVisita : 0,
       columnasDetectadas: Object.keys(col).filter((c) => c !== '__filaEncabezado'),
     };
   }
