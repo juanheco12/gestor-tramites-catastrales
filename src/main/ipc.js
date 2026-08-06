@@ -29,6 +29,7 @@ const CANALES = {
   APP_VERSION: 'app:version',
   APP_BUSCAR_ACTUALIZACION: 'app:buscar-actualizacion',
   GENERAR_ACTA: 'bandeja:generar-acta',
+  GENERAR_ACTAS_LOTE: 'bandeja:generar-actas-lote',
 };
 
 /**
@@ -287,6 +288,188 @@ function registrarIpc(contenedor, obtenerVentana) {
 
   /* ------------------------- acta de visita ------------------------- */
 
+  /**
+   * Lee en edis los datos de contacto del interesado de UN radicado.
+   *
+   * No se exige datos.existe: ese indicador se apoya en los campos de la
+   * izquierda de la ficha (estado, fecha, clase), y si esos no se leen se
+   * descartaban los datos del interesado AUNQUE hubieran llegado bien.
+   * Alcanza con que venga cualquiera de los cuatro.
+   *
+   * @returns {Promise<{interesado: object, motivo: string}>}
+   */
+  const leerInteresado = async (page, radicado) => {
+    try {
+      const datos = await syncService.consultaTramite.consultar(page, radicado);
+      if (datos && (datos.interesado || datos.telefono || datos.email || datos.direccion)) {
+        logger.info(
+          `Acta ${radicado}: interesado="${datos.interesado}" tel="${datos.telefono}" ` +
+          `email="${datos.email}" dir="${datos.direccion}"`
+        );
+        return {
+          interesado: {
+            nombre: datos.interesado,
+            telefono: datos.telefono,
+            email: datos.email,
+            direccion: datos.direccion,
+          },
+          motivo: '',
+        };
+      }
+      const motivo = datos
+        ? 'edis no devolvió esos datos para este radicado'
+        : syncService.consultaTramite.ultimoProblema || 'no se pudo consultar edis';
+      logger.warn(`Acta ${radicado}: ${motivo}.`);
+      return { interesado: {}, motivo };
+    } catch (error) {
+      const motivo = error.message.split('\n')[0];
+      logger.warn(`Acta ${radicado}: sin datos del interesado (${motivo}).`);
+      return { interesado: {}, motivo };
+    }
+  };
+
+  /**
+   * Genera actas de varios trámites de una sola pasada.
+   *
+   * El navegador se abre UNA vez para todo el lote (no una vez por acta): cada
+   * apertura implica verificar la sesión y volver a cargar la página, así que
+   * reusarla es la diferencia entre segundos y minutos en 20 actas.
+   *
+   * Tampoco se abre cada .docx: con 20 actas eso llenaría la pantalla de
+   * ventanas de Word. Al final se abre la CARPETA.
+   */
+  ipcMain.handle(CANALES.GENERAR_ACTAS_LOTE, async (_evento, opciones) => {
+    const { modo = 'visitas', radicados = [] } = opciones || {};
+    try {
+      const todos = gestionRepository.listarConGestion();
+      const porNumero = new Map(todos.map((t) => [String(t.numero_tramite).trim(), t]));
+
+      let seleccionados = [];
+      const noEncontrados = [];
+      if (modo === 'radicados') {
+        const anioActual = String(new Date().getFullYear());
+        for (const crudo of radicados) {
+          const numero = String(crudo).trim();
+          if (!numero) continue;
+          // Se acepta el número solo ("7412"): en la oficina se habla del
+          // radicado sin el año, y exigirlo completo sería un tropiezo tonto.
+          const t = porNumero.get(numero) ||
+            (/^\d+$/.test(numero) ? porNumero.get(`${anioActual}-${numero}`) : undefined);
+          if (t) seleccionados.push(t);
+          else noEncontrados.push(numero);
+        }
+      } else {
+        // Los que requieren visita, en el orden en que están en la bandeja.
+        const deVisita = new Set(
+          gestionRepository.listarVisitas().map((v) => String(v.numero_tramite).trim())
+        );
+        seleccionados = todos.filter((t) => deVisita.has(String(t.numero_tramite).trim()));
+      }
+
+      // Sin duplicados: pegar una lista con el mismo radicado dos veces no
+      // debe consultar edis dos veces ni contar dos actas.
+      const vistos = new Set();
+      seleccionados = seleccionados.filter((t) => {
+        const n = String(t.numero_tramite).trim();
+        if (vistos.has(n)) return false;
+        vistos.add(n);
+        return true;
+      });
+
+      if (seleccionados.length === 0) {
+        return {
+          ok: true,
+          total: 0,
+          generadas: [],
+          incompletas: [],
+          fallidas: [],
+          noEncontrados,
+          carpeta: actaService.carpetaSalida,
+        };
+      }
+
+      const generadas = [];
+      const incompletas = [];
+      const fallidas = [];
+      let page = null;
+      let motivoSinNavegador = '';
+
+      if (syncService.enEjecucion) {
+        motivoSinNavegador = 'hay una sincronización en curso';
+        logger.warn(`Actas en lote: ${motivoSinNavegador}; se generan sin los datos del interesado.`);
+      } else {
+        // Mismo candado que sincronizar(): comparten navegador y pestaña, y sin
+        // esto una sincronización automática le arrebataría la página al lote.
+        syncService.enEjecucion = true;
+      }
+
+      try {
+        if (!motivoSinNavegador) {
+          try {
+            notificar('acta-lote', {
+              mensaje: `Abriendo edis para generar ${seleccionados.length} acta(s)...`,
+              hechas: 0,
+              total: seleccionados.length,
+            });
+            page = await syncService.browserManager.abrirBandejaAutenticada({ interactivo: false });
+          } catch (error) {
+            motivoSinNavegador = error.message.split('\n')[0];
+            logger.warn(`Actas en lote: sin navegador (${motivoSinNavegador}).`);
+          }
+        }
+
+        for (let i = 0; i < seleccionados.length; i++) {
+          const tramite = seleccionados[i];
+          notificar('acta-lote', {
+            mensaje: `Generando acta ${i + 1} de ${seleccionados.length} (${tramite.numero_tramite})...`,
+            hechas: i,
+            total: seleccionados.length,
+          });
+
+          let interesado = {};
+          let motivo = motivoSinNavegador;
+          if (page) {
+            const leido = await leerInteresado(page, tramite.numero_tramite);
+            interesado = leido.interesado;
+            motivo = leido.motivo;
+          }
+
+          try {
+            const faltantes = actaService.camposFaltantes(tramite, interesado);
+            await actaService.generar(tramite, interesado);
+            if (faltantes.length > 0) {
+              incompletas.push({ radicado: tramite.numero_tramite, faltantes, motivo });
+            } else {
+              generadas.push(tramite.numero_tramite);
+            }
+          } catch (error) {
+            // Un trámite que falla no debe abortar el lote: se anota y se sigue.
+            logger.error(`Acta ${tramite.numero_tramite}: ${error.message}`);
+            fallidas.push({ radicado: tramite.numero_tramite, error: error.message });
+          }
+        }
+      } finally {
+        syncService.enEjecucion = false;
+        await syncService.browserManager.cerrar().catch(() => {});
+      }
+
+      if (generadas.length + incompletas.length > 0) shell.openPath(actaService.carpetaSalida);
+
+      return {
+        ok: true,
+        total: seleccionados.length,
+        generadas,
+        incompletas,
+        fallidas,
+        noEncontrados,
+        carpeta: actaService.carpetaSalida,
+      };
+    } catch (error) {
+      logger.error(`IPC generar actas en lote: ${error.message}`);
+      return { ok: false, error: error.message };
+    }
+  });
+
   ipcMain.handle(CANALES.GENERAR_ACTA, async (_evento, tramiteId) => {
     try {
       const tramite = gestionRepository
@@ -313,35 +496,12 @@ function registrarIpc(contenedor, obtenerVentana) {
           const page = await syncService.browserManager.abrirBandejaAutenticada({
             interactivo: false,
           });
-          const datos = await syncService.consultaTramite.consultar(page, tramite.numero_tramite);
-          // No se exige datos.existe: ese indicador se apoya en los campos de
-          // la izquierda de la ficha (estado, fecha, clase), y si esos no se
-          // leen se descartaban los datos del interesado AUNQUE hubieran
-          // llegado bien. Alcanza con que venga cualquiera de los cuatro.
-          if (datos && (datos.interesado || datos.telefono || datos.email || datos.direccion)) {
-            interesado = {
-              nombre: datos.interesado,
-              telefono: datos.telefono,
-              email: datos.email,
-              direccion: datos.direccion,
-            };
-            logger.info(
-              `Acta ${tramite.numero_tramite}: interesado="${datos.interesado}" ` +
-              `tel="${datos.telefono}" email="${datos.email}" dir="${datos.direccion}"`
-            );
-          } else if (datos) {
-            motivoSinDatos = 'edis no devolvió esos datos para este radicado';
-            logger.warn(
-              `Acta ${tramite.numero_tramite}: ${motivoSinDatos}. ` +
-              `etiquetas=${(syncService.consultaTramite.ultimasEtiquetas || []).join(' / ')}`
-            );
-          } else {
-            motivoSinDatos = syncService.consultaTramite.ultimoProblema || 'no se pudo consultar edis';
-            logger.warn(`Acta ${tramite.numero_tramite}: ${motivoSinDatos}.`);
-          }
+          const leido = await leerInteresado(page, tramite.numero_tramite);
+          interesado = leido.interesado;
+          motivoSinDatos = leido.motivo;
         } catch (error) {
           motivoSinDatos = error.message.split('\n')[0];
-          logger.warn(`Acta ${tramite.numero_tramite}: sin datos del interesado (${motivoSinDatos}).`);
+          logger.warn(`Acta ${tramite.numero_tramite}: sin navegador (${motivoSinDatos}).`);
         } finally {
           syncService.enEjecucion = false;
           await syncService.browserManager.cerrar().catch(() => {});

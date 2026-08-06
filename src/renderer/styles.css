@@ -527,6 +527,71 @@ body {
 .tarjeta-valor { font-size: 22px; font-weight: 600; }
 .tarjeta-alerta .tarjeta-valor { color: var(--color-error); }
 
+/* Botón de la tarjeta de visitas. Se deja SIEMPRE visible: esconderlo hasta
+   pasar el mouse quedaba más discreto, pero es una acción que hay que poder
+   encontrar de una, y con el mouse encima no se descubre nunca. */
+.btn-actas {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-primario);
+  border-radius: 999px;
+  background: var(--color-panel);
+  color: var(--color-primario);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.btn-actas:hover:not(:disabled) {
+  background: var(--color-primario);
+  color: var(--on-primario);
+  transform: translateY(-1px);
+}
+
+.btn-actas:disabled { opacity: 0.5; cursor: wait; }
+
+/* Opciones del modal de actas: tarjetas seleccionables en vez de radios
+   sueltos, para que se vea de un golpe qué se va a generar. */
+.opciones-actas { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+
+/* Se cualifica con .modal-caja a propósito: estas opciones son <label>, y
+   ".modal-caja label" (especificidad 0,1,1) le gana a ".opcion-acta" (0,1,0).
+   Sin esto, su flex-direction: column ponía el radio ENCIMA del texto. */
+.modal-caja .opcion-acta {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-borde);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.modal-caja .opcion-acta:hover { border-color: var(--color-primario); }
+
+/* :has() permite resaltar la tarjeta elegida sin JavaScript extra. */
+.modal-caja .opcion-acta:has(input:checked) {
+  border-color: var(--color-primario);
+  background: var(--color-panel-alt);
+}
+
+.modal-caja .opcion-acta input {
+  width: auto;
+  margin-top: 2px;
+  accent-color: var(--color-primario);
+}
+
+.opcion-cuerpo { display: flex; flex-direction: column; gap: 2px; }
+.opcion-titulo { font-size: 13px; font-weight: 600; }
+.opcion-detalle { font-size: 11px; color: var(--color-texto-secundario); }
+
 .filtros {
   display: flex;
   align-items: center;

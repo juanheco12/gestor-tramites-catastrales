@@ -832,6 +832,91 @@ document.getElementById('ficha-acta').addEventListener('click', async () => {
   }
 });
 
+/* ------------------------- actas de visita en bloque ------------------------- */
+
+const modalActas = document.getElementById('modal-actas');
+const actasEstado = document.getElementById('actas-estado');
+const campoRadicados = document.getElementById('actas-campo-radicados');
+
+/** Radio elegido ahora mismo en el modal. */
+const modoActas = () =>
+  document.querySelector('input[name="actas-modo"]:checked').value;
+
+function refrescarModoActas() {
+  campoRadicados.classList.toggle('oculto', modoActas() !== 'radicados');
+}
+
+for (const radio of document.querySelectorAll('input[name="actas-modo"]')) {
+  radio.addEventListener('change', refrescarModoActas);
+}
+
+function abrirModalActas() {
+  const cuantas = document.getElementById('m-visita').textContent;
+  document.getElementById('actas-conteo-visitas').textContent =
+    cuantas === '—' ? 'Según la bandeja actual' : `${cuantas} trámite(s) en la bandeja`;
+  actasEstado.textContent = '';
+  refrescarModoActas();
+  // El desplegable de Acciones se cierra solo al hacer clic en una opción
+  // (ver configurarMenu), así que aquí no hay que cerrarlo a mano.
+  modalActas.classList.remove('oculto');
+}
+
+document.getElementById('btn-actas-lote').addEventListener('click', abrirModalActas);
+document.getElementById('btn-actas-menu').addEventListener('click', abrirModalActas);
+document.getElementById('actas-cancelar').addEventListener('click', () => {
+  modalActas.classList.add('oculto');
+});
+
+document.getElementById('actas-generar').addEventListener('click', async () => {
+  const boton = document.getElementById('actas-generar');
+  const modo = modoActas();
+
+  // Se admite un radicado por línea, o varios separados por coma o espacios:
+  // así se puede pegar tal cual desde el Excel o desde un chat.
+  const radicados = modo === 'radicados'
+    ? document.getElementById('actas-radicados').value
+        .split(/[\s,;]+/)
+        .map((r) => r.trim())
+        .filter(Boolean)
+    : [];
+
+  if (modo === 'radicados' && radicados.length === 0) {
+    actasEstado.textContent = 'Escriba al menos un radicado.';
+    return;
+  }
+
+  boton.disabled = true;
+  actasEstado.textContent = 'Preparando...';
+  try {
+    const r = await window.bandejaApi.generarActasLote({ modo, radicados });
+    if (!r.ok) {
+      actasEstado.textContent = `No se pudo generar: ${r.error}`;
+      return;
+    }
+    if (r.total === 0) {
+      actasEstado.textContent = modo === 'radicados'
+        ? 'Ninguno de esos radicados está en el sistema. Sincronice la bandeja o revise los números.'
+        : 'No hay trámites marcados para visita en la bandeja.';
+      return;
+    }
+
+    const partes = [`${r.generadas.length + r.incompletas.length} de ${r.total} acta(s) generada(s).`];
+    if (r.incompletas.length > 0) {
+      partes.push(`${r.incompletas.length} quedaron con datos por llenar a mano (${r.incompletas[0].motivo || 'sin datos en edis'}).`);
+    }
+    if (r.fallidas.length > 0) {
+      partes.push(`${r.fallidas.length} fallaron: ${r.fallidas.map((f) => f.radicado).join(', ')}.`);
+    }
+    if (r.noEncontrados.length > 0) {
+      partes.push(`No están en el sistema: ${r.noEncontrados.join(', ')}.`);
+    }
+    actasEstado.textContent = partes.join(' ');
+    mostrarEstado('exito', `Actas de visita: ${partes.join(' ')} Carpeta: ${r.carpeta}`);
+  } finally {
+    boton.disabled = false;
+  }
+});
+
 document.getElementById('ficha-eliminar').addEventListener('click', async () => {
   if (fichaTramiteId === null) return;
   const r = await window.bandejaApi.eliminarManual(fichaTramiteId);
@@ -1352,7 +1437,12 @@ document.getElementById('btn-cerrar-sesion').addEventListener('click', () => {
 /* ------------------------- eventos del proceso principal ------------------------- */
 
 window.bandejaApi.onProgreso((datos) => {
-  if (datos.evento === 'progreso') {
+  if (datos.evento === 'acta-lote') {
+    // El avance se muestra dentro del modal, que es donde el usuario está
+    // mirando, y también en la barra de estado por si lo cerró.
+    if (actasEstado) actasEstado.textContent = datos.mensaje;
+    mostrarEstado('progreso', datos.mensaje);
+  } else if (datos.evento === 'progreso') {
     mostrarEstado('progreso', datos.mensaje);
   } else if (datos.evento === 'fallo') {
     mostrarEstado('error', `Error: ${datos.mensaje}`);

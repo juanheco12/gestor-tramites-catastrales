@@ -72,6 +72,7 @@
               <button id="btn-importar" class="menu-item" role="menuitem">Importar Excel</button>
               <button id="btn-exportar" class="menu-item" role="menuitem">Exportar Excel</button>
               <button id="btn-exportar-visitas" class="menu-item" role="menuitem">Exportar Excel de visitas</button>
+              <button id="btn-actas-menu" class="menu-item" role="menuitem">Generar actas de visita…</button>
             </div>
           </div>
 
@@ -96,6 +97,10 @@
       <div class="tarjeta">
         <span class="tarjeta-titulo">Requieren visita</span>
         <span id="m-visita" class="tarjeta-valor">—</span>
+        <button id="btn-actas-lote" class="btn-actas" title="Generar las actas de visita en bloque">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+          Generar actas
+        </button>
       </div>
       <div class="tarjeta tarjeta-alerta"><span class="tarjeta-titulo">Devueltos</span><span id="m-devueltos" class="tarjeta-valor">—</span></div>
     </section>
@@ -411,6 +416,45 @@
         <button id="acceso-borrar" class="btn-secundario">Borrar guardadas</button>
         <button id="acceso-cancelar" class="btn-secundario">Cancelar</button>
         <button id="acceso-guardar" class="btn-primario">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL ACTAS DE VISITA EN BLOQUE ==================== -->
+  <div id="modal-actas" class="modal oculto">
+    <div class="modal-caja">
+      <h2>Generar actas de visita</h2>
+      <p class="modal-texto">
+        Se genera un Word por trámite en la carpeta de actas, con los datos del
+        interesado tomados de edis.
+      </p>
+
+      <div class="opciones-actas">
+        <label class="opcion-acta">
+          <input type="radio" name="actas-modo" value="visitas" checked />
+          <span class="opcion-cuerpo">
+            <span class="opcion-titulo">Los que requieren visita</span>
+            <span class="opcion-detalle" id="actas-conteo-visitas">—</span>
+          </span>
+        </label>
+        <label class="opcion-acta">
+          <input type="radio" name="actas-modo" value="radicados" />
+          <span class="opcion-cuerpo">
+            <span class="opcion-titulo">Una lista de radicados</span>
+            <span class="opcion-detalle">Los que usted escriba abajo</span>
+          </span>
+        </label>
+      </div>
+
+      <label id="actas-campo-radicados" class="oculto">Radicados
+        <textarea id="actas-radicados" rows="5"
+          placeholder="Uno por línea o separados por coma:&#10;2026-7412&#10;2026-7413, 2026-7414"></textarea>
+      </label>
+
+      <p id="actas-estado" class="modal-nota"></p>
+      <div class="modal-botones">
+        <button id="actas-cancelar" class="btn-secundario">Cerrar</button>
+        <button id="actas-generar" class="btn-primario">Generar</button>
       </div>
     </div>
   </div>

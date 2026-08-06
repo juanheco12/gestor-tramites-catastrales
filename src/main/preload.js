@@ -30,6 +30,7 @@ const CANALES = {
   APP_VERSION: 'app:version',
   APP_BUSCAR_ACTUALIZACION: 'app:buscar-actualizacion',
   GENERAR_ACTA: 'bandeja:generar-acta',
+  GENERAR_ACTAS_LOTE: 'bandeja:generar-actas-lote',
 };
 
 contextBridge.exposeInMainWorld('bandejaApi', {
@@ -58,6 +59,7 @@ contextBridge.exposeInMainWorld('bandejaApi', {
   radicacionesGuardarConfig: (activo, usuario, desde) =>
     ipcRenderer.invoke(CANALES.RADICACIONES_GUARDAR_CONFIG, { activo, usuario, desde }),
   generarActa: (tramiteId) => ipcRenderer.invoke(CANALES.GENERAR_ACTA, tramiteId),
+  generarActasLote: (opciones) => ipcRenderer.invoke(CANALES.GENERAR_ACTAS_LOTE, opciones),
   appVersion: () => ipcRenderer.invoke(CANALES.APP_VERSION),
   appBuscarActualizacion: () => ipcRenderer.invoke(CANALES.APP_BUSCAR_ACTUALIZACION),
   onProgreso: (callback) => {
