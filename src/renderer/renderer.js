@@ -821,10 +821,12 @@ document.getElementById('ficha-acta').addEventListener('click', async () => {
       aviso.textContent = `No se pudo generar: ${r.error}`;
       return;
     }
-    aviso.textContent =
-      r.faltantes.length > 0
-        ? `Acta generada. Complete a mano: ${r.faltantes.join(', ')}.`
-        : 'Acta generada y abierta en Word.';
+    if (r.faltantes.length === 0) {
+      aviso.textContent = 'Acta generada y abierta en Word.';
+    } else {
+      const motivo = r.motivoSinDatos ? ` (${r.motivoSinDatos})` : '';
+      aviso.textContent = `Acta generada. Complete a mano: ${r.faltantes.join(', ')}${motivo}.`;
+    }
   } finally {
     boton.disabled = false;
   }

@@ -294,13 +294,21 @@ function registrarIpc(contenedor, obtenerVentana) {
         .find((t) => t.id === tramiteId);
       if (!tramite) throw new Error('No se encontró el trámite.');
 
-      // El acta pide teléfono, e-mail y dirección del interesado, que NO están
-      // en la bandeja: solo en "Consulta de trámite". Se consultan al momento
-      // (una sola consulta). Si algo falla, el acta se genera igual con lo que
-      // haya y se avisa qué campos quedaron en blanco: es mejor entregar el
-      // acta con un dato para llenar a mano que no entregarla.
+      // Si una sincronización (manual o automática) está usando el navegador
+      // en este momento, NO se puede abrir otra página a la vez: comparten el
+      // mismo browserManager y la misma pestaña, y una le pisaría la consulta
+      // a la otra sin dar ningún error, dejando el acta con los datos vacíos
+      // sin explicación. Se avisa y se genera el acta sin esos datos.
       let interesado = {};
-      if (!syncService.enEjecucion) {
+      let motivoSinDatos = '';
+      if (syncService.enEjecucion) {
+        motivoSinDatos = 'hay una sincronización en curso; espere a que termine e intente de nuevo';
+        logger.warn(`Acta ${tramite.numero_tramite}: ${motivoSinDatos}.`);
+      } else {
+        // Se toma el mismo candado que usa sincronizar(): así ninguna
+        // sincronización automática puede arrancar (y arrebatar la página)
+        // mientras se consulta el trámite para el acta.
+        syncService.enEjecucion = true;
         try {
           const page = await syncService.browserManager.abrirBandejaAutenticada({
             interactivo: false,
@@ -321,14 +329,21 @@ function registrarIpc(contenedor, obtenerVentana) {
               `Acta ${tramite.numero_tramite}: interesado="${datos.interesado}" ` +
               `tel="${datos.telefono}" email="${datos.email}" dir="${datos.direccion}"`
             );
-          } else {
+          } else if (datos) {
+            motivoSinDatos = 'edis no devolvió esos datos para este radicado';
             logger.warn(
-              `Acta ${tramite.numero_tramite}: no se leyeron los datos del interesado en edis.`
+              `Acta ${tramite.numero_tramite}: ${motivoSinDatos}. ` +
+              `etiquetas=${(syncService.consultaTramite.ultimasEtiquetas || []).join(' / ')}`
             );
+          } else {
+            motivoSinDatos = syncService.consultaTramite.ultimoProblema || 'no se pudo consultar edis';
+            logger.warn(`Acta ${tramite.numero_tramite}: ${motivoSinDatos}.`);
           }
         } catch (error) {
-          logger.warn(`Acta ${tramite.numero_tramite}: sin datos del interesado (${error.message}).`);
+          motivoSinDatos = error.message.split('\n')[0];
+          logger.warn(`Acta ${tramite.numero_tramite}: sin datos del interesado (${motivoSinDatos}).`);
         } finally {
+          syncService.enEjecucion = false;
           await syncService.browserManager.cerrar().catch(() => {});
         }
       }
@@ -336,7 +351,7 @@ function registrarIpc(contenedor, obtenerVentana) {
       const faltantes = actaService.camposFaltantes(tramite, interesado);
       const ruta = await actaService.generar(tramite, interesado);
       shell.openPath(ruta);
-      return { ok: true, ruta, faltantes };
+      return { ok: true, ruta, faltantes, motivoSinDatos };
     } catch (error) {
       logger.error(`IPC generar acta: ${error.message}`);
       return { ok: false, error: error.message };
