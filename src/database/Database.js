@@ -108,6 +108,34 @@ class Database {
       }
       this.db.pragma('user_version = 2');
     }
+
+    if (version < 3) {
+      // Hasta la v1.19.0, al enviar un trámite la observación pasaba a "OK"
+      // pero el análisis solo se llenaba si estaba VACÍO. Por eso una
+      // etiqueta de un ciclo anterior (típicamente "MOTIVADA", de cuando el
+      // trámite fue devuelto) se quedaba pegada aunque ya se hubiera vuelto
+      // a enviar, y en el Histórico esa fila desentonaba con las demás.
+      //
+      // Se corrigen SOLO los ya enviados cuyo análisis es esa etiqueta
+      // suelta y que no son de revisión jurídica. Las motivaciones reales
+      // ("REV.JURIDICA/ NO PROCEDE", "SOLICITANDO DOCUMENTOS", etc.) son el
+      // trabajo del jurídico y no se tocan.
+      const arreglo = this.db
+        .prepare(`
+          UPDATE tramites_gestion
+          SET analisis = 'OK', actualizado_en = datetime('now', 'localtime')
+          WHERE mi_estado IN ('enviado', 'finalizado')
+            AND UPPER(TRIM(COALESCE(analisis, ''))) = 'MOTIVADA'
+            AND UPPER(COALESCE(observacion, '') || ' ' ||
+                      COALESCE(estado_seguimiento, '') || ' ' ||
+                      COALESCE(analisis, '')) NOT LIKE '%JURIDIC%'
+        `)
+        .run();
+      if (arreglo.changes > 0) {
+        console.log(`[migración] Se pusieron en "OK" ${arreglo.changes} análisis que habían quedado en "MOTIVADA" pese a estar ya enviados.`);
+      }
+      this.db.pragma('user_version = 3');
+    }
   }
 
   get conexion() {

@@ -228,6 +228,24 @@ class GestionRepository {
       let cambiados = 0;
       for (const id of ids) {
         const fecha = fechasPorId[id] || null;
+
+        // El análisis se decide igual que la observación: al enviar, un
+        // trámite normal queda en "OK". Antes solo se llenaba si estaba
+        // vacío, así que una etiqueta de un ciclo anterior (p. ej.
+        // "MOTIVADA" de cuando lo devolvieron) se quedaba pegada aunque el
+        // trámite ya se hubiera vuelto a enviar.
+        //
+        // La excepción es la revisión JURÍDICA: ahí el análisis es la
+        // motivación real ("REV.JURIDICA/ NO PROCEDE", "SOLICITANDO
+        // DOCUMENTOS") y borrarla perdería el trabajo del jurídico. Se mira
+        // ANTES de actualizar, porque este mismo UPDATE pisa la observación.
+        const actual = this.db
+          .prepare('SELECT observacion, estado_seguimiento, analisis FROM tramites_gestion WHERE tramite_id = ?')
+          .get(id);
+        const esJuridica = Boolean(actual) && normalizar(
+          `${actual.observacion || ''} ${actual.estado_seguimiento || ''} ${actual.analisis || ''}`
+        ).includes('JURIDIC');
+
         const r = this.db
           .prepare(`
             UPDATE tramites_gestion
@@ -235,13 +253,15 @@ class GestionRepository {
                 fecha_realizacion = COALESCE(fecha_realizacion, COALESCE(@fecha, date('now', 'localtime'))),
                 fecha_envio = COALESCE(fecha_envio, COALESCE(@fecha, date('now', 'localtime'))),
                 observacion = 'OK',
-                analisis = COALESCE(NULLIF(analisis, ''), 'OK'),
+                analisis = CASE WHEN @juridica = 1
+                                THEN COALESCE(NULLIF(analisis, ''), 'OK')
+                                ELSE 'OK' END,
                 estado_seguimiento = 'EN REVISION',
                 actualizado_en = datetime('now', 'localtime')
             WHERE mi_estado NOT IN ('enviado', 'finalizado')
               AND tramite_id = @id
           `)
-          .run({ id, fecha });
+          .run({ id, fecha, juridica: esJuridica ? 1 : 0 });
         cambiados += r.changes;
       }
       return cambiados;
