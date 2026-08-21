@@ -31,6 +31,7 @@ const CANALES = {
   APP_BUSCAR_ACTUALIZACION: 'app:buscar-actualizacion',
   GENERAR_ACTA: 'bandeja:generar-acta',
   GENERAR_ACTAS_LOTE: 'bandeja:generar-actas-lote',
+  CONSULTAR_NPN: 'bandeja:consultar-npn',
 };
 
 contextBridge.exposeInMainWorld('bandejaApi', {
@@ -60,6 +61,7 @@ contextBridge.exposeInMainWorld('bandejaApi', {
     ipcRenderer.invoke(CANALES.RADICACIONES_GUARDAR_CONFIG, { activo, usuario, desde }),
   generarActa: (tramiteId) => ipcRenderer.invoke(CANALES.GENERAR_ACTA, tramiteId),
   generarActasLote: (opciones) => ipcRenderer.invoke(CANALES.GENERAR_ACTAS_LOTE, opciones),
+  consultarNpn: (opciones) => ipcRenderer.invoke(CANALES.CONSULTAR_NPN, opciones),
   appVersion: () => ipcRenderer.invoke(CANALES.APP_VERSION),
   appBuscarActualizacion: () => ipcRenderer.invoke(CANALES.APP_BUSCAR_ACTUALIZACION),
   onProgreso: (callback) => {

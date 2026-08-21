@@ -236,16 +236,10 @@ function LECTOR_FICHA() {
     return '';
   };
 
-  const leer = (etiqueta) => {
-    const objetivo = normalizar(etiqueta);
-    if (porFila[objetivo]) return porFila[objetivo];
-    return porSecuencia(objetivo);
-  };
-
   /**
-   * Último recurso para "Usuario que radica": buscar el texto en cualquier
-   * parte de la página y tomar el primer control con valor que venga después,
-   * sin suponer nada sobre tablas ni celdas.
+   * Último recurso: buscar el texto de la etiqueta en cualquier parte de la
+   * página y tomar el primer control con valor que venga después, sin suponer
+   * nada sobre tablas ni celdas.
    */
   const buscarPorTextoSuelto = (etiqueta) => {
     const objetivo = normalizar(etiqueta);
@@ -265,6 +259,21 @@ function LECTOR_FICHA() {
       }
     }
     return '';
+  };
+
+  /**
+   * Lee un campo probando los tres métodos, del más preciso al más tolerante.
+   *
+   * El último recurso se aplica a TODOS los campos, no solo a "Usuario que
+   * radica": los de la columna izquierda de la ficha (estado, fecha de
+   * radicación, clase, NPN) fallan con los dos primeros métodos igual que
+   * aquel, mientras que los datos del interesado sí se leen. Limitar el
+   * respaldo a un solo campo dejaba los demás vacíos sin motivo.
+   */
+  const leer = (etiqueta) => {
+    const objetivo = normalizar(etiqueta);
+    if (porFila[objetivo]) return porFila[objetivo];
+    return porSecuencia(objetivo) || buscarPorTextoSuelto(etiqueta);
   };
 
   /**
@@ -290,7 +299,8 @@ function LECTOR_FICHA() {
     return 'El texto "Usuario que radica" NO aparece en la página.';
   };
 
-  const usuarioRadica = leer('Usuario que radica') || buscarPorTextoSuelto('Usuario que radica');
+  // leer() ya incluye la búsqueda por texto suelto como último recurso.
+  const usuarioRadica = leer('Usuario que radica');
 
   return {
     fechaRadicacion: leer('Fecha Radicación'),

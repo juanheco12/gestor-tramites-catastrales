@@ -173,6 +173,48 @@ class ExportService {
     this._ajustarAnchos(hoja);
   }
 
+  /**
+   * Excel con el NPN (número predial) de una lista de radicados, consultados
+   * en edis uno por uno.
+   *
+   * Se incluyen TODOS los radicados pedidos, también los que no se pudieron
+   * resolver, con el motivo en su fila: una lista a la que le faltan renglones
+   * obliga a cotejar a mano contra la original para saber cuáles se cayeron.
+   *
+   * @param {Array<{radicado: string, npn?: string, clase?: string,
+   *   interesado?: string, motivo?: string}>} filas
+   * @returns {Promise<string>} Ruta del archivo generado
+   */
+  async exportarNpn(filas) {
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Gestor de Trámites Catastrales';
+    const hoja = workbook.addWorksheet('NPN');
+    this._encabezado(hoja, ['RADICADO', 'NPN', 'SECTOR', 'CLASE', 'INTERESADO', 'OBSERVACION']);
+
+    for (const f of filas) {
+      const fila = hoja.addRow([
+        f.radicado ?? '',
+        f.npn ?? '',
+        sectorDesdeNpn(f.npn),
+        f.clase ?? '',
+        f.interesado ?? '',
+        f.npn ? '' : (f.motivo || 'no se pudo leer el NPN'),
+      ]);
+      fila.font = { name: 'Arial' };
+    }
+
+    this._ajustarAnchos(hoja);
+    const sello = new Date().toISOString().slice(0, 10);
+    const ruta = path.join(
+      path.dirname(path.resolve(this.config.app.exportXlsxPath)),
+      `NPN ${sello}.xlsx`
+    );
+    await workbook.xlsx.writeFile(ruta);
+    const conNpn = filas.filter((f) => f.npn).length;
+    this.logger.info(`Excel de NPN exportado: ${ruta} (${conNpn} de ${filas.length} con NPN)`);
+    return ruta;
+  }
+
   _encabezado(hoja, etiquetas) {
     const fila = hoja.addRow(etiquetas);
     fila.font = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' } };

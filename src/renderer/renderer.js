@@ -832,6 +832,63 @@ document.getElementById('ficha-acta').addEventListener('click', async () => {
   }
 });
 
+/* ------------------------- consultar NPN de una lista ------------------------- */
+
+const modalNpn = document.getElementById('modal-npn');
+const npnEstado = document.getElementById('npn-estado');
+const npnTexto = document.getElementById('npn-radicados');
+
+/** Admite uno por línea, o varios separados por coma, punto y coma o espacios. */
+const radicadosDe = (texto) =>
+  texto.split(/[\s,;]+/).map((r) => r.trim()).filter(Boolean);
+
+function refrescarConteoNpn() {
+  const n = new Set(radicadosDe(npnTexto.value)).size;
+  document.getElementById('npn-conteo').textContent =
+    n === 0 ? 'Pegue aquí su lista de radicados.' : `${n} radicado(s) distintos en la lista.`;
+}
+
+npnTexto.addEventListener('input', refrescarConteoNpn);
+
+document.getElementById('btn-npn-menu').addEventListener('click', () => {
+  npnEstado.textContent = '';
+  refrescarConteoNpn();
+  modalNpn.classList.remove('oculto');
+});
+
+document.getElementById('npn-cancelar').addEventListener('click', () => {
+  modalNpn.classList.add('oculto');
+});
+
+document.getElementById('npn-consultar').addEventListener('click', async () => {
+  const boton = document.getElementById('npn-consultar');
+  const radicados = radicadosDe(npnTexto.value);
+  if (radicados.length === 0) {
+    npnEstado.textContent = 'Pegue al menos un radicado.';
+    return;
+  }
+
+  boton.disabled = true;
+  npnEstado.textContent = 'Preparando...';
+  try {
+    const r = await window.bandejaApi.consultarNpn({ radicados });
+    if (!r.ok) {
+      npnEstado.textContent = `No se pudo consultar: ${r.error}`;
+      return;
+    }
+    const partes = [`${r.conNpn} de ${r.total} radicado(s) con NPN.`];
+    if (r.sinNpn.length > 0) {
+      // Van igual en el Excel con el motivo, para no tener que cotejar a mano
+      // contra la lista original cuál se cayó.
+      partes.push(`Sin NPN (van en el Excel con el motivo): ${r.sinNpn.join(', ')}.`);
+    }
+    npnEstado.textContent = partes.join(' ');
+    mostrarEstado('exito', `NPN: ${partes.join(' ')} Archivo: ${r.ruta}`);
+  } finally {
+    boton.disabled = false;
+  }
+});
+
 /* ------------------------- actas de visita en bloque ------------------------- */
 
 const modalActas = document.getElementById('modal-actas');
@@ -1445,7 +1502,10 @@ document.getElementById('btn-cerrar-sesion').addEventListener('click', () => {
 /* ------------------------- eventos del proceso principal ------------------------- */
 
 window.bandejaApi.onProgreso((datos) => {
-  if (datos.evento === 'acta-lote') {
+  if (datos.evento === 'npn-lote') {
+    if (npnEstado) npnEstado.textContent = datos.mensaje;
+    mostrarEstado('progreso', datos.mensaje);
+  } else if (datos.evento === 'acta-lote') {
     // El avance se muestra dentro del modal, que es donde el usuario está
     // mirando, y también en la barra de estado por si lo cerró.
     if (actasEstado) actasEstado.textContent = datos.mensaje;

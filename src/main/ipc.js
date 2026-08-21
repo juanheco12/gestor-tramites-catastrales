@@ -30,6 +30,7 @@ const CANALES = {
   APP_BUSCAR_ACTUALIZACION: 'app:buscar-actualizacion',
   GENERAR_ACTA: 'bandeja:generar-acta',
   GENERAR_ACTAS_LOTE: 'bandeja:generar-actas-lote',
+  CONSULTAR_NPN: 'bandeja:consultar-npn',
 };
 
 /**
@@ -547,6 +548,105 @@ function registrarIpc(contenedor, obtenerVentana) {
       return { ok: true, ruta, faltantes, motivoSinDatos };
     } catch (error) {
       logger.error(`IPC generar acta: ${error.message}`);
+      return { ok: false, error: error.message };
+    }
+  });
+
+  /* ------------------------- consulta de NPN en bloque ------------------------- */
+
+  /**
+   * Consulta en edis el NPN (número predial) de una lista de radicados y
+   * devuelve un Excel con la relación.
+   *
+   * El navegador se abre UNA vez para toda la lista, igual que en las actas:
+   * abrirlo por radicado multiplicaría por diez el tiempo de una lista larga.
+   */
+  ipcMain.handle(CANALES.CONSULTAR_NPN, async (_evento, opciones) => {
+    const { radicados = [] } = opciones || {};
+    try {
+      const anioActual = String(new Date().getFullYear());
+      // Se acepta el número solo ("7412"): en la oficina se habla del radicado
+      // sin el año. Y se descartan repetidos para no consultar dos veces.
+      const vistos = new Set();
+      const lista = [];
+      for (const crudo of radicados) {
+        let numero = String(crudo).trim();
+        if (!numero) continue;
+        if (/^\d+$/.test(numero)) numero = `${anioActual}-${numero}`;
+        if (vistos.has(numero)) continue;
+        vistos.add(numero);
+        lista.push(numero);
+      }
+
+      if (lista.length === 0) {
+        return { ok: false, error: 'No se recibió ningún radicado válido.' };
+      }
+
+      if (syncService.enEjecucion) {
+        return {
+          ok: false,
+          error: 'Hay una sincronización en curso. Espere a que termine e intente de nuevo.',
+        };
+      }
+      syncService.enEjecucion = true;
+
+      const filas = [];
+      try {
+        notificar('npn-lote', {
+          mensaje: `Abriendo edis para consultar ${lista.length} radicado(s)...`,
+          hechas: 0,
+          total: lista.length,
+        });
+        const page = await syncService.browserManager.abrirBandejaAutenticada({ interactivo: false });
+
+        for (let i = 0; i < lista.length; i++) {
+          const radicado = lista[i];
+          notificar('npn-lote', {
+            mensaje: `Consultando ${i + 1} de ${lista.length} (${radicado})...`,
+            hechas: i,
+            total: lista.length,
+          });
+          try {
+            const datos = await syncService.consultaTramite.consultar(page, radicado);
+            if (datos && datos.npn) {
+              filas.push({
+                radicado,
+                npn: datos.npn,
+                clase: datos.clase,
+                interesado: datos.interesado,
+              });
+            } else {
+              filas.push({
+                radicado,
+                npn: '',
+                motivo: datos
+                  ? 'el trámite no trae NPN o no existe ese radicado'
+                  : (syncService.consultaTramite.ultimoProblema || 'no se pudo consultar edis'),
+              });
+            }
+          } catch (error) {
+            // Un radicado que falla no debe tumbar la lista entera.
+            const motivo = error.message.split('\n')[0];
+            logger.warn(`NPN ${radicado}: ${motivo}`);
+            filas.push({ radicado, npn: '', motivo });
+          }
+        }
+      } finally {
+        syncService.enEjecucion = false;
+        await syncService.browserManager.cerrar().catch(() => {});
+      }
+
+      const ruta = await exportService.exportarNpn(filas);
+      shell.openPath(ruta);
+      return {
+        ok: true,
+        ruta,
+        total: filas.length,
+        conNpn: filas.filter((f) => f.npn).length,
+        sinNpn: filas.filter((f) => !f.npn).map((f) => f.radicado),
+      };
+    } catch (error) {
+      logger.error(`IPC consultar NPN: ${error.message}`);
       return { ok: false, error: error.message };
     }
   });

@@ -73,6 +73,7 @@
               <button id="btn-exportar" class="menu-item" role="menuitem">Exportar Excel</button>
               <button id="btn-exportar-visitas" class="menu-item" role="menuitem">Exportar Excel de visitas</button>
               <button id="btn-actas-menu" class="menu-item" role="menuitem">Generar actas de visita…</button>
+              <button id="btn-npn-menu" class="menu-item" role="menuitem">Consultar NPN de una lista…</button>
             </div>
           </div>
 
@@ -416,6 +417,27 @@
         <button id="acceso-borrar" class="btn-secundario">Borrar guardadas</button>
         <button id="acceso-cancelar" class="btn-secundario">Cancelar</button>
         <button id="acceso-guardar" class="btn-primario">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL CONSULTAR NPN DE UNA LISTA ==================== -->
+  <div id="modal-npn" class="modal oculto">
+    <div class="modal-caja">
+      <h2>Consultar NPN de una lista</h2>
+      <p class="modal-texto">
+        Se busca cada radicado en "Consulta de trámites" de edis, se toma su
+        número predial y se arma un Excel con la relación.
+      </p>
+      <label>Radicados
+        <textarea id="npn-radicados" rows="8"
+          placeholder="Uno por línea o separados por coma:&#10;2026-7412&#10;2026-7413, 2026-7414"></textarea>
+      </label>
+      <p class="modal-texto" id="npn-conteo">—</p>
+      <p id="npn-estado" class="modal-nota"></p>
+      <div class="modal-botones">
+        <button id="npn-cancelar" class="btn-secundario">Cerrar</button>
+        <button id="npn-consultar" class="btn-primario">Consultar y exportar</button>
       </div>
     </div>
   </div>
