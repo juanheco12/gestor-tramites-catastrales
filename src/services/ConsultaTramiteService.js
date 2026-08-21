@@ -302,11 +302,29 @@ function LECTOR_FICHA() {
   // leer() ya incluye la búsqueda por texto suelto como último recurso.
   const usuarioRadica = leer('Usuario que radica');
 
+  /**
+   * El NPN por su FORMA, no por su etiqueta.
+   *
+   * El número predial tiene un formato inconfundible
+   * (01-01-00-00-0834-0901-9-00-00-0115) que ningún otro campo de la ficha
+   * comparte, así que se puede reconocer recorriendo los controles de la
+   * página sin depender de encontrar el rótulo "NPN" ni de cómo esté armada
+   * la tabla. Es el respaldo que queda cuando los otros métodos fallan.
+   */
+  const npnPorFormato = () => {
+    const patron = /^\d{2}-\d{2}-\d{2}-\d{2}-\d{4}-\d{4}-\d-\d{2}-\d{2}-\d{4}$/;
+    for (const campo of document.querySelectorAll('input, textarea')) {
+      const v = (campo.value || '').trim();
+      if (patron.test(v)) return v;
+    }
+    return '';
+  };
+
   return {
     fechaRadicacion: leer('Fecha Radicación'),
     usuarioRadica,
     clase: leer('Clase'),
-    npn: leer('NPN'),
+    npn: leer('NPN') || npnPorFormato(),
     interesado: leer('Nombre'),
     // Datos de contacto del interesado: son los que el acta de visita pide y
     // que no están en la bandeja.
@@ -428,6 +446,9 @@ class ConsultaTramiteService {
       if (aviso.tipo === 'no-encontrado') {
         return {
           existe: false,
+          // Distinguir esto de "abrí la ficha pero no leí el campo" evita
+          // repetir el diagnóstico: aquí edis dijo expresamente que no está.
+          noEncontrado: true,
           fechaRadicacion: '',
           usuarioRadica: '',
           clase: '',

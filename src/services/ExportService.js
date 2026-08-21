@@ -177,29 +177,29 @@ class ExportService {
    * Excel con el NPN (número predial) de una lista de radicados, consultados
    * en edis uno por uno.
    *
-   * Se incluyen TODOS los radicados pedidos, también los que no se pudieron
-   * resolver, con el motivo en su fila: una lista a la que le faltan renglones
-   * obliga a cotejar a mano contra la original para saber cuáles se cayeron.
+   * Solo RADICADO y NPN: es lo único que se pide de esta consulta, y agregar
+   * clase, sector o interesado obligaría a borrar columnas antes de usar la
+   * relación. La columna de observación se añade ÚNICAMENTE si algún radicado
+   * falló, porque ahí sí hace falta saber cuál y por qué.
    *
-   * @param {Array<{radicado: string, npn?: string, clase?: string,
-   *   interesado?: string, motivo?: string}>} filas
+   * Se incluyen TODOS los radicados pedidos, también los que no se pudieron
+   * resolver: una lista a la que le faltan renglones obliga a cotejar a mano
+   * contra la original para saber cuáles se cayeron.
+   *
+   * @param {Array<{radicado: string, npn?: string, motivo?: string}>} filas
    * @returns {Promise<string>} Ruta del archivo generado
    */
   async exportarNpn(filas) {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'Gestor de Trámites Catastrales';
     const hoja = workbook.addWorksheet('NPN');
-    this._encabezado(hoja, ['RADICADO', 'NPN', 'SECTOR', 'CLASE', 'INTERESADO', 'OBSERVACION']);
+    const huboFallas = filas.some((f) => !f.npn);
+    this._encabezado(hoja, huboFallas ? ['RADICADO', 'NPN', 'OBSERVACION'] : ['RADICADO', 'NPN']);
 
     for (const f of filas) {
-      const fila = hoja.addRow([
-        f.radicado ?? '',
-        f.npn ?? '',
-        sectorDesdeNpn(f.npn),
-        f.clase ?? '',
-        f.interesado ?? '',
-        f.npn ? '' : (f.motivo || 'no se pudo leer el NPN'),
-      ]);
+      const valores = [f.radicado ?? '', f.npn ?? ''];
+      if (huboFallas) valores.push(f.npn ? '' : (f.motivo || 'no se pudo leer el NPN'));
+      const fila = hoja.addRow(valores);
       fila.font = { name: 'Arial' };
     }
 

@@ -609,20 +609,19 @@ function registrarIpc(contenedor, obtenerVentana) {
           try {
             const datos = await syncService.consultaTramite.consultar(page, radicado);
             if (datos && datos.npn) {
-              filas.push({
-                radicado,
-                npn: datos.npn,
-                clase: datos.clase,
-                interesado: datos.interesado,
-              });
+              filas.push({ radicado, npn: datos.npn });
             } else {
-              filas.push({
-                radicado,
-                npn: '',
-                motivo: datos
-                  ? 'el trámite no trae NPN o no existe ese radicado'
-                  : (syncService.consultaTramite.ultimoProblema || 'no se pudo consultar edis'),
-              });
+              // Tres situaciones muy distintas que antes se informaban con el
+              // mismo texto: saber cuál es evita repetir el diagnóstico.
+              let motivo;
+              if (!datos) {
+                motivo = syncService.consultaTramite.ultimoProblema || 'no se pudo consultar edis';
+              } else if (datos.noEncontrado) {
+                motivo = 'edis respondió que ese radicado no existe';
+              } else {
+                motivo = 'se abrió la ficha pero no se pudo leer el NPN';
+              }
+              filas.push({ radicado, npn: '', motivo });
             }
           } catch (error) {
             // Un radicado que falla no debe tumbar la lista entera.
