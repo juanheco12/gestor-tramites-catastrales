@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { ipcMain, shell, dialog, app } = require('electron');
 const { autoUpdater } = require('electron-updater');
 
@@ -585,18 +587,54 @@ function registrarIpc(contenedor, obtenerVentana) {
       }
       syncService.enEjecucion = true;
 
+      // --- Guardado incremental y reanudación ---------------------------
+      // Con listas de miles de radicados una corrida dura horas. Guardar
+      // solo al final significaría perderlo todo por un corte de luz o un
+      // cierre accidental, así que cada resultado se anexa a un CSV apenas
+      // se obtiene, y al volver a correr se saltan los ya resueltos.
+      const carpetaSalida = path.dirname(path.resolve(contenedor.config.app.exportXlsxPath));
+      const rutaAvance = path.join(carpetaSalida, 'NPN-avance.csv');
+
+      const yaResueltos = new Map();
+      if (fs.existsSync(rutaAvance)) {
+        for (const linea of fs.readFileSync(rutaAvance, 'utf8').split('\n')) {
+          const [rad, npn] = linea.split(';');
+          if (rad && npn && npn.trim()) yaResueltos.set(rad.trim(), npn.trim());
+        }
+      }
+      if (!fs.existsSync(rutaAvance)) {
+        fs.writeFileSync(rutaAvance, 'RADICADO;NPN;OBSERVACION\n', 'utf8');
+      }
+      const anotar = (radicado, npn, motivo) => {
+        try {
+          fs.appendFileSync(rutaAvance, `${radicado};${npn || ''};${motivo || ''}\n`, 'utf8');
+        } catch (error) {
+          logger.warn(`No se pudo anotar el avance de ${radicado}: ${error.message}`);
+        }
+      };
+
       const filas = [];
       let foto = '';
+      let htmlGuardados = 0;
+      let fallosSeguidos = 0;
+      let reabiertos = 0;
       try {
         notificar('npn-lote', {
           mensaje: `Abriendo edis para consultar ${lista.length} radicado(s)...`,
           hechas: 0,
           total: lista.length,
         });
-        const page = await syncService.browserManager.abrirBandejaAutenticada({ interactivo: false });
+        let page = await syncService.browserManager.abrirBandejaAutenticada({ interactivo: false });
 
         for (let i = 0; i < lista.length; i++) {
           const radicado = lista[i];
+
+          // Ya resuelto en una corrida anterior: no se vuelve a consultar.
+          if (yaResueltos.has(radicado)) {
+            filas.push({ radicado, npn: yaResueltos.get(radicado) });
+            continue;
+          }
+
           notificar('npn-lote', {
             mensaje: `Consultando ${i + 1} de ${lista.length} (${radicado})...`,
             hechas: i,
@@ -612,6 +650,8 @@ function registrarIpc(contenedor, obtenerVentana) {
             });
             if (datos && datos.npn) {
               filas.push({ radicado, npn: datos.npn });
+              anotar(radicado, datos.npn, '');
+              fallosSeguidos = 0;
             } else {
               // Tres situaciones muy distintas que antes se informaban con el
               // mismo texto: saber cuál es evita repetir el diagnóstico.
@@ -622,18 +662,50 @@ function registrarIpc(contenedor, obtenerVentana) {
                 motivo = 'edis respondió que ese radicado no existe';
               } else {
                 motivo = 'se abrió la ficha pero no se pudo leer el NPN';
-                // Del PRIMER fallo se guarda una foto de lo que el robot ve.
-                // Es la única forma de distinguir "la búsqueda no trajo nada"
-                // de "sí trajo pero no se leyó", sin hacer otra ronda a ciegas.
-                if (!foto) foto = await syncService.consultaTramite.guardarFoto(page, `NPN ${radicado}`);
+                // El HTML de CADA fallo queda guardado: el NPN está dentro,
+                // así que aunque la lectura falle los datos no se pierden y
+                // se pueden recuperar del archivo. La foto solo del primero:
+                // miles de PNG ocuparían más de un giga.
+                if (htmlGuardados < 3000) {
+                  const guardado = await syncService.consultaTramite.guardarFoto(
+                    page, `NPN ${radicado}`, { conFoto: !foto }
+                  );
+                  if (guardado && !foto) foto = guardado;
+                  htmlGuardados++;
+                }
               }
               filas.push({ radicado, npn: '', motivo });
+              anotar(radicado, '', motivo);
+              fallosSeguidos++;
             }
           } catch (error) {
             // Un radicado que falla no debe tumbar la lista entera.
             const motivo = error.message.split('\n')[0];
             logger.warn(`NPN ${radicado}: ${motivo}`);
             filas.push({ radicado, npn: '', motivo });
+            anotar(radicado, '', motivo);
+            fallosSeguidos++;
+          }
+
+          // Una corrida de miles dura horas y la sesión de edis puede vencerse
+          // por el camino. Varios fallos seguidos es la señal: se reabre la
+          // sesión una vez en vez de desperdiciar el resto de la lista.
+          if (fallosSeguidos >= 8 && reabiertos < 5) {
+            reabiertos++;
+            fallosSeguidos = 0;
+            notificar('npn-lote', {
+              mensaje: `Reabriendo la sesión de edis (intento ${reabiertos})...`,
+              hechas: i,
+              total: lista.length,
+            });
+            logger.warn(`NPN: 8 fallos seguidos; se reabre la sesión (intento ${reabiertos}).`);
+            try {
+              await syncService.browserManager.cerrar().catch(() => {});
+              page = await syncService.browserManager.abrirBandejaAutenticada({ interactivo: false });
+            } catch (error) {
+              logger.error(`NPN: no se pudo reabrir la sesión: ${error.message}`);
+              break;
+            }
           }
         }
       } finally {
@@ -647,6 +719,7 @@ function registrarIpc(contenedor, obtenerVentana) {
         ok: true,
         ruta,
         foto,
+        avance: rutaAvance,
         total: filas.length,
         conNpn: filas.filter((f) => f.npn).length,
         sinNpn: filas.filter((f) => !f.npn).map((f) => f.radicado),

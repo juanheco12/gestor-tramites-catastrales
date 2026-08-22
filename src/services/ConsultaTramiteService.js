@@ -619,15 +619,18 @@ class ConsultaTramiteService {
    *
    * @returns {Promise<string>} ruta de la foto, o '' si no se pudo
    */
-  async guardarFoto(page, nombre) {
+  async guardarFoto(page, nombre, { conFoto = true } = {}) {
     try {
       const carpeta = path.join(path.dirname(this.config.app.dbPath), 'diagnostico');
       fs.mkdirSync(carpeta, { recursive: true });
       const base = path.join(carpeta, String(nombre).replace(/[\\/:*?"<>|]/g, '-'));
-      await page.screenshot({ path: `${base}.png`, fullPage: true });
+      // El HTML siempre: pesa poco y trae los datos, así que sirve para
+      // recuperarlos aunque la lectura falle. La foto es opcional porque en
+      // una corrida de miles de radicados ocuparía más de un giga.
       fs.writeFileSync(`${base}.html`, await page.content(), 'utf8');
-      this.logger.info(`Diagnóstico guardado: ${base}.png`);
-      return `${base}.png`;
+      if (conFoto) await page.screenshot({ path: `${base}.png`, fullPage: true });
+      this.logger.info(`Diagnóstico guardado: ${base}.html`);
+      return conFoto ? `${base}.png` : `${base}.html`;
     } catch (error) {
       this.logger.warn(`No se pudo guardar el diagnóstico: ${error.message}`);
       return '';
