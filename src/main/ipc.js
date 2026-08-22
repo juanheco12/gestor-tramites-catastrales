@@ -591,6 +591,7 @@ function registrarIpc(contenedor, obtenerVentana) {
       syncService.enEjecucion = true;
 
       const filas = [];
+      let foto = '';
       try {
         notificar('npn-lote', {
           mensaje: `Abriendo edis para consultar ${lista.length} radicado(s)...`,
@@ -607,7 +608,13 @@ function registrarIpc(contenedor, obtenerVentana) {
             total: lista.length,
           });
           try {
-            const datos = await syncService.consultaTramite.consultar(page, radicado);
+            // esperarNpn: se sigue esperando hasta que el NPN aparezca, en vez
+            // de conformarse con que cargue cualquier campo. Un campo que
+            // aparece antes que los demás cortaba la espera y el NPN salía
+            // vacío aunque el trámite sí lo tuviera.
+            const datos = await syncService.consultaTramite.consultar(page, radicado, {
+              esperarNpn: true,
+            });
             if (datos && datos.npn) {
               filas.push({ radicado, npn: datos.npn });
             } else {
@@ -620,6 +627,10 @@ function registrarIpc(contenedor, obtenerVentana) {
                 motivo = 'edis respondió que ese radicado no existe';
               } else {
                 motivo = 'se abrió la ficha pero no se pudo leer el NPN';
+                // Del PRIMER fallo se guarda una foto de lo que el robot ve.
+                // Es la única forma de distinguir "la búsqueda no trajo nada"
+                // de "sí trajo pero no se leyó", sin hacer otra ronda a ciegas.
+                if (!foto) foto = await syncService.consultaTramite.guardarFoto(page, `NPN ${radicado}`);
               }
               filas.push({ radicado, npn: '', motivo });
             }
@@ -640,6 +651,7 @@ function registrarIpc(contenedor, obtenerVentana) {
       return {
         ok: true,
         ruta,
+        foto,
         total: filas.length,
         conNpn: filas.filter((f) => f.npn).length,
         sinNpn: filas.filter((f) => !f.npn).map((f) => f.radicado),

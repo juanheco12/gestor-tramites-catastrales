@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { normalizarFecha } = require('../utils/fechas');
 
 /**
@@ -384,7 +386,7 @@ class ConsultaTramiteService {
    *   null si no se pudo consultar (error de red/página); `existe: false` si la
    *   consulta funcionó pero ese número todavía no está radicado.
    */
-  async consultar(page, radicado) {
+  async consultar(page, radicado, { esperarNpn = false } = {}) {
     const cfg = this.config.consultaTramite;
     if (!cfg || !cfg.url) return null;
 
@@ -464,9 +466,17 @@ class ConsultaTramiteService {
       }
 
       // Sondeo hasta que la ficha traiga algo (ver ESPERA_RESULTADO_MS).
-      const limite = Date.now() + ESPERA_RESULTADO_MS;
+      //
+      // Con esperarNpn se sigue sondeando aunque _tieneAlgo ya dé verdadero:
+      // ese indicador se conforma con CUALQUIER campo, así que un campo que
+      // aparece antes que los demás cortaba la espera y el NPN se leía vacío
+      // aunque el trámite sí lo tuviera. Cuando lo que se busca es el NPN, hay
+      // que esperar al NPN.
+      const espera = esperarNpn ? Math.max(ESPERA_RESULTADO_MS, 15000) : ESPERA_RESULTADO_MS;
+      const limite = Date.now() + espera;
       let datos = await this._leerFicha(page);
-      while (!this._tieneAlgo(datos) && Date.now() < limite) {
+      const falta = (d) => (esperarNpn ? !d.npn : !this._tieneAlgo(d));
+      while (falta(datos) && Date.now() < limite) {
         await page.waitForTimeout(400);
         datos = await this._leerFicha(page);
       }
@@ -558,6 +568,31 @@ class ConsultaTramiteService {
    *
    * @returns {Promise<{tipo: ''|'no-encontrado'|'error', texto: string}>}
    */
+  /**
+   * Guarda una foto y el HTML de lo que el robot tiene en pantalla.
+   *
+   * Cuando un campo no se lee hay dos causas que desde afuera se ven idénticas
+   * —la búsqueda no trajo resultados, o sí los trajo pero no se supieron
+   * leer— y distinguirlas a ciegas costó varias vueltas. La foto lo resuelve
+   * mirando, en vez de seguir suponiendo.
+   *
+   * @returns {Promise<string>} ruta de la foto, o '' si no se pudo
+   */
+  async guardarFoto(page, nombre) {
+    try {
+      const carpeta = path.join(path.dirname(this.config.app.dbPath), 'diagnostico');
+      fs.mkdirSync(carpeta, { recursive: true });
+      const base = path.join(carpeta, String(nombre).replace(/[\\/:*?"<>|]/g, '-'));
+      await page.screenshot({ path: `${base}.png`, fullPage: true });
+      fs.writeFileSync(`${base}.html`, await page.content(), 'utf8');
+      this.logger.info(`Diagnóstico guardado: ${base}.png`);
+      return `${base}.png`;
+    } catch (error) {
+      this.logger.warn(`No se pudo guardar el diagnóstico: ${error.message}`);
+      return '';
+    }
+  }
+
   async _descartarAviso(page) {
     const sinAviso = { tipo: '', texto: '' };
     try {

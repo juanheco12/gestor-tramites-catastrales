@@ -882,6 +882,9 @@ document.getElementById('npn-consultar').addEventListener('click', async () => {
       // contra la lista original cuál se cayó.
       partes.push(`Sin NPN (van en el Excel con el motivo): ${r.sinNpn.join(', ')}.`);
     }
+    if (r.foto) {
+      partes.push(`Se guardó una foto de lo que vio el robot en: ${r.foto}`);
+    }
     npnEstado.textContent = partes.join(' ');
     mostrarEstado('exito', `NPN: ${partes.join(' ')} Archivo: ${r.ruta}`);
   } finally {
