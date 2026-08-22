@@ -22,10 +22,6 @@ const CANALES = {
   CREDENCIALES_GUARDAR: 'credenciales:guardar',
   CREDENCIALES_ESTADO: 'credenciales:estado',
   CREDENCIALES_BORRAR: 'credenciales:borrar',
-  RADICACIONES_LISTAR: 'radicaciones:listar',
-  RADICACIONES_RESUMEN: 'radicaciones:resumen',
-  RADICACIONES_CONFIG: 'radicaciones:config',
-  RADICACIONES_GUARDAR_CONFIG: 'radicaciones:guardar-config',
   APP_VERSION: 'app:version',
   APP_BUSCAR_ACTUALIZACION: 'app:buscar-actualizacion',
   GENERAR_ACTA: 'bandeja:generar-acta',
@@ -47,7 +43,6 @@ function registrarIpc(contenedor, obtenerVentana) {
     syncLogRepository,
     exportService,
     gestionRepository,
-    radicacionRepository,
     importService,
     credencialesService,
     actaService,
@@ -693,60 +688,6 @@ function registrarIpc(contenedor, obtenerVentana) {
     }
   });
 
-  /* ------------------------- radicaciones (ventanilla) ------------------------- */
-
-  ipcMain.handle(CANALES.RADICACIONES_LISTAR, () => radicacionRepository.listar());
-
-  ipcMain.handle(CANALES.RADICACIONES_RESUMEN, () => radicacionRepository.resumen());
-
-  ipcMain.handle(CANALES.RADICACIONES_CONFIG, () => {
-    const anio = String(new Date().getFullYear());
-    const hasta = radicacionRepository.ultimoExplorado(anio);
-    return {
-      activo: radicacionRepository.activo(),
-      usuario: radicacionRepository.obtenerEstado('radicaciones.usuario') || '',
-      desde: radicacionRepository.desde(),
-      diagnostico: radicacionRepository.diagnostico(),
-      // Hasta qué radicado llegó el recorrido: verlo evita el caso en que
-      // el puntero quedó por encima de las radicaciones propias y todo
-      // parecía "no encuentra nada" sin explicación.
-      revisadoHasta: hasta === null ? '' : `${anio}-${hasta}`,
-      traza: radicacionRepository.obtenerEstado('radicaciones.traza') || '',
-    };
-  });
-
-  ipcMain.handle(CANALES.RADICACIONES_GUARDAR_CONFIG, (_evento, { activo, usuario, desde }) => {
-    try {
-      const nombre = String(usuario || '').trim();
-      if (activo && !nombre) {
-        throw new Error(
-          'Escriba su nombre tal como aparece en edis (campo "Usuario que radica"): es lo que ' +
-          'permite distinguir sus radicaciones de las de sus compañeros.'
-        );
-      }
-      const inicio = String(desde || '').trim();
-      if (inicio && !/^\d{4}-\d+$/.test(inicio)) {
-        throw new Error('El radicado de inicio debe tener la forma AÑO-NÚMERO, por ejemplo 2026-7272.');
-      }
-
-      radicacionRepository.guardarEstado('radicaciones.usuario', nombre);
-      radicacionRepository.guardarEstado('radicaciones.desde', inicio);
-      radicacionRepository.activar(activo);
-
-      // Guardar con un radicado de inicio significa "volvé a recorrer desde
-      // ahí", siempre. Antes solo se reiniciaba si el valor cambiaba, así que
-      // si el recorrido ya se había pasado de largo no había forma de
-      // volverlo atrás: se guardaba y no pasaba nada.
-      if (inicio) {
-        const anio = inicio.split('-')[0];
-        radicacionRepository.guardarEstado(`radicaciones.ultimoExplorado.${anio}`, '');
-      }
-      return { ok: true };
-    } catch (error) {
-      logger.error(`IPC radicaciones config: ${error.message}`);
-      return { ok: false, error: error.message };
-    }
-  });
 }
 
 module.exports = { registrarIpc, CANALES };

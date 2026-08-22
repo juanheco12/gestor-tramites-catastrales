@@ -11,9 +11,6 @@ const cuerpoLogs = document.querySelector('#tabla-logs tbody');
 const cuerpoHistorico = document.querySelector('#tabla-historico tbody');
 const cuerpoPos = document.querySelector('#tabla-pos tbody');
 const cuerpoEstadisticas = document.querySelector('#tabla-estadisticas tbody');
-const cuerpoRadicaciones = document.querySelector('#tabla-radicaciones tbody');
-const contadorRadicaciones = document.getElementById('contador-radicaciones');
-const buscadorRadicaciones = document.getElementById('buscador-radicaciones');
 const contadorTramites = document.getElementById('contador-tramites');
 const contadorHistorico = document.getElementById('contador-historico');
 const contadorPos = document.getElementById('contador-pos');
@@ -41,8 +38,6 @@ let anioActivo = 'todos';
 let textoHistorico = '';
 let categoriaActiva = 'todas';
 let textoPos = '';
-let radicaciones = [];
-let textoRadicaciones = '';
 
 /* ------------------------- utilidades ------------------------- */
 
@@ -639,100 +634,6 @@ function cerrarDetalleMes() {
 
 document.getElementById('cerrar-mes-juridica').addEventListener('click', cerrarDetalleMes);
 
-/* ------------------------- vista radicaciones (ventanilla) ------------------------- */
-
-function pintarRadicaciones() {
-  const visibles = radicaciones.filter((r) => {
-    if (!textoRadicaciones) return true;
-    const contenido = `${r.numero_radicado} ${r.clase || ''} ${r.npn || ''} ${r.interesado || ''}`.toLowerCase();
-    return contenido.includes(textoRadicaciones);
-  });
-  contadorRadicaciones.textContent = String(visibles.length);
-
-  cuerpoRadicaciones.replaceChildren(
-    ...visibles.slice(0, 1000).map((r) => {
-      const fila = document.createElement('tr');
-      fila.append(
-        celda(r.numero_radicado),
-        celda(r.fecha_radicacion),
-        celda(r.clase, 'celda-tipo'),
-        celda(r.npn),
-        celda(r.interesado, 'celda-obs')
-      );
-      return fila;
-    })
-  );
-}
-
-async function cargarRadicaciones() {
-  const config = await window.bandejaApi.radicacionesConfig();
-  // El botón del menú solo existe para quien radica: al resto no le sirve
-  // de nada y solo sería ruido.
-  document.getElementById('vista-btn-radicaciones').classList.toggle('oculto', !config.activo);
-  if (!config.activo) return;
-
-  radicaciones = await window.bandejaApi.radicacionesListar();
-  const resumen = await window.bandejaApi.radicacionesResumen();
-  document.getElementById('m-rad-hoy').textContent = resumen.hoy ?? 0;
-  document.getElementById('m-rad-semana').textContent = resumen.semana ?? 0;
-  document.getElementById('m-rad-mes').textContent = resumen.mes ?? 0;
-  document.getElementById('m-rad-total').textContent = resumen.total ?? 0;
-
-  // Una tabla vacía sin explicación no dice si el sistema no encontró nada o
-  // si directamente no llegó a buscar: se muestra qué pasó en la última vuelta.
-  const aviso = document.getElementById('radicaciones-aviso');
-  aviso.textContent = config.diagnostico || '';
-  aviso.classList.toggle('oculto', !config.diagnostico);
-
-  // Traza de las últimas consultas: deja ver si el problema está en el número
-  // que se busca, en el nombre que se lee, o en la comparación.
-  const traza = document.getElementById('radicaciones-traza');
-  traza.textContent = config.traza ? `Últimas consultas → ${config.traza}` : '';
-  traza.classList.toggle('oculto', !config.traza);
-
-  document.getElementById('radicaciones-hasta').textContent = config.revisadoHasta
-    ? `Revisado hasta el ${config.revisadoHasta}`
-    : 'Todavía no se ha revisado ningún radicado';
-  const campoRehacer = document.getElementById('radicaciones-rehacer-desde');
-  if (!campoRehacer.value) campoRehacer.value = config.desde || '';
-
-  pintarRadicaciones();
-}
-
-buscadorRadicaciones.addEventListener('input', () => {
-  textoRadicaciones = buscadorRadicaciones.value.trim().toLowerCase();
-  pintarRadicaciones();
-});
-
-// Reiniciar el recorrido tenía que hacerse volviendo a guardar un campo en
-// Mi perfil: quedaba escondido justo cuando era lo que hacía falta.
-document.getElementById('btn-rehacer-radicaciones').addEventListener('click', async () => {
-  const desde = document.getElementById('radicaciones-rehacer-desde').value.trim();
-  const config = await window.bandejaApi.radicacionesConfig();
-  const r = await window.bandejaApi.radicacionesGuardarConfig(true, config.usuario, desde);
-  if (!r.ok) {
-    mostrarEstado('error', r.error);
-    return;
-  }
-  mostrarEstado(
-    'exito',
-    `Listo: se revisará de nuevo desde el ${desde}. Pulse Sincronizar (puede tardar según cuántos radicados haya que recorrer).`
-  );
-  await cargarRadicaciones();
-});
-
-// Reemplaza el paso manual de ir copiando cada radicado al Excel.
-document.getElementById('btn-copiar-radicados').addEventListener('click', async () => {
-  const hoy = new Date().toISOString().slice(0, 10);
-  const deHoy = radicaciones.filter((r) => r.fecha_radicacion === hoy);
-  if (deHoy.length === 0) {
-    mostrarEstado('progreso', 'Todavía no hay radicaciones suyas registradas hoy.');
-    return;
-  }
-  await navigator.clipboard.writeText(deHoy.map((r) => r.numero_radicado).join('\n'));
-  mostrarEstado('exito', `${deHoy.length} radicado(s) de hoy copiados: ya puede pegarlos en Excel.`);
-});
-
 /* ------------------------- ficha del trámite ------------------------- */
 
 const modalFicha = document.getElementById('modal-ficha');
@@ -1093,7 +994,6 @@ async function refrescarTodo() {
     cargarResumen(),
     cargarLogs(),
     cargarSeguimientos(),
-    cargarRadicaciones(),
   ]);
 }
 
@@ -1109,7 +1009,6 @@ document.querySelector('.vistas').addEventListener('click', (e) => {
   document.getElementById('vista-historico').classList.toggle('oculto', vista !== 'historico');
   document.getElementById('vista-seguimientos').classList.toggle('oculto', vista !== 'seguimientos');
   document.getElementById('vista-estadisticas').classList.toggle('oculto', vista !== 'estadisticas');
-  document.getElementById('vista-radicaciones').classList.toggle('oculto', vista !== 'radicaciones');
 });
 
 activarOrdenable('tabla-tramites', 'tramites', pintarTramites);
@@ -1297,15 +1196,6 @@ async function abrirPerfil() {
     info.version + (info.instalada ? '' : ' (modo desarrollo)');
   document.getElementById('perfil-actualizacion-estado').textContent = '';
 
-  const configRad = await window.bandejaApi.radicacionesConfig();
-  document.getElementById('radicaciones-activo').checked = configRad.activo;
-  document.getElementById('radicaciones-usuario').value = configRad.usuario;
-  document.getElementById('radicaciones-desde').value = configRad.desde || '';
-  document.getElementById('radicaciones-estado').textContent = '';
-  document.getElementById('radicaciones-diagnostico').textContent = configRad.diagnostico
-    ? `Última revisión: ${configRad.diagnostico}`
-    : '';
-
   await cargarLogs();
   modalPerfil.classList.remove('oculto');
 }
@@ -1323,23 +1213,6 @@ document.getElementById('btn-buscar-actualizacion').addEventListener('click', as
   } finally {
     boton.disabled = false;
   }
-});
-
-document.getElementById('btn-guardar-radicaciones').addEventListener('click', async () => {
-  const activo = document.getElementById('radicaciones-activo').checked;
-  const usuario = document.getElementById('radicaciones-usuario').value;
-  const desde = document.getElementById('radicaciones-desde').value;
-  const aviso = document.getElementById('radicaciones-estado');
-
-  const r = await window.bandejaApi.radicacionesGuardarConfig(activo, usuario, desde);
-  if (!r.ok) {
-    aviso.textContent = r.error;
-    return;
-  }
-  aviso.textContent = activo
-    ? 'Listo. Pulse Sincronizar para que empiecen a contarse sus radicaciones.'
-    : 'Conteo de radicaciones desactivado.';
-  await cargarRadicaciones();
 });
 
 document.getElementById('perfil-cerrar').addEventListener('click', () => {

@@ -23,10 +23,6 @@ const CANALES = {
   CREDENCIALES_GUARDAR: 'credenciales:guardar',
   CREDENCIALES_ESTADO: 'credenciales:estado',
   CREDENCIALES_BORRAR: 'credenciales:borrar',
-  RADICACIONES_LISTAR: 'radicaciones:listar',
-  RADICACIONES_RESUMEN: 'radicaciones:resumen',
-  RADICACIONES_CONFIG: 'radicaciones:config',
-  RADICACIONES_GUARDAR_CONFIG: 'radicaciones:guardar-config',
   APP_VERSION: 'app:version',
   APP_BUSCAR_ACTUALIZACION: 'app:buscar-actualizacion',
   GENERAR_ACTA: 'bandeja:generar-acta',
@@ -54,11 +50,6 @@ contextBridge.exposeInMainWorld('bandejaApi', {
   credencialesGuardar: (usuario, clave) =>
     ipcRenderer.invoke(CANALES.CREDENCIALES_GUARDAR, { usuario, clave }),
   credencialesBorrar: () => ipcRenderer.invoke(CANALES.CREDENCIALES_BORRAR),
-  radicacionesListar: () => ipcRenderer.invoke(CANALES.RADICACIONES_LISTAR),
-  radicacionesResumen: () => ipcRenderer.invoke(CANALES.RADICACIONES_RESUMEN),
-  radicacionesConfig: () => ipcRenderer.invoke(CANALES.RADICACIONES_CONFIG),
-  radicacionesGuardarConfig: (activo, usuario, desde) =>
-    ipcRenderer.invoke(CANALES.RADICACIONES_GUARDAR_CONFIG, { activo, usuario, desde }),
   generarActa: (tramiteId) => ipcRenderer.invoke(CANALES.GENERAR_ACTA, tramiteId),
   generarActasLote: (opciones) => ipcRenderer.invoke(CANALES.GENERAR_ACTAS_LOTE, opciones),
   consultarNpn: (opciones) => ipcRenderer.invoke(CANALES.CONSULTAR_NPN, opciones),

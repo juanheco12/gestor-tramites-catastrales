@@ -6,7 +6,6 @@ const { obtenerDatabase } = require('../database/Database');
 const { TramiteRepository } = require('../database/repositories/TramiteRepository');
 const { SyncLogRepository } = require('../database/repositories/SyncLogRepository');
 const { GestionRepository } = require('../database/repositories/GestionRepository');
-const { RadicacionRepository } = require('../database/repositories/RadicacionRepository');
 const { ImportService } = require('../services/ImportService');
 const { CredencialesService } = require('../services/CredencialesService');
 const { BandejaSyncService } = require('../services/BandejaSyncService');
@@ -27,7 +26,6 @@ function crearContenedor() {
   const tramiteRepository = new TramiteRepository(database);
   const syncLogRepository = new SyncLogRepository(database);
   const gestionRepository = new GestionRepository(database);
-  const radicacionRepository = new RadicacionRepository(database);
 
   const bitacoraService = new BitacoraService(tramiteRepository, config, logger);
   const credencialesService = new CredencialesService(config, logger);
@@ -41,7 +39,6 @@ function crearContenedor() {
     bitacoraService,
     gestionRepository,
     credencialesService,
-    radicacionRepository,
   });
 
   const actaService = new ActaService(config, logger);
@@ -51,7 +48,6 @@ function crearContenedor() {
   return {
     bitacoraService,
     gestionRepository,
-    radicacionRepository,
     importService,
     credencialesService,
     config,

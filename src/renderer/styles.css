@@ -153,8 +153,7 @@ body {
 #vista-bandeja,
 #vista-historico,
 #vista-seguimientos,
-#vista-estadisticas,
-#vista-radicaciones {
+#vista-estadisticas {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -164,8 +163,7 @@ body {
 #vista-bandeja.oculto,
 #vista-historico.oculto,
 #vista-seguimientos.oculto,
-#vista-estadisticas.oculto,
-#vista-radicaciones.oculto {
+#vista-estadisticas.oculto {
   display: none;
 }
 

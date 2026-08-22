@@ -172,11 +172,17 @@ function LECTOR_FICHA() {
     // edis NO usa <input> para los campos de solo lectura de la ficha: los
     // pinta como <span> con borde para que parezcan cajas
     // (<span id="..._LblNpn" class="border rounded">01-01-...</span>).
-    // Buscar solo input.value dejaba vacíos NPN, clase, estado, fecha de
-    // radicación y usuario que radica; los datos del interesado sí se leían
-    // porque esos sí son campos editables de verdad.
-    const texto = (contenedor.innerText || contenedor.textContent || '').trim();
-    return texto || null;
+    //
+    // Se exige que el texto venga de un elemento ANIDADO, no de la celda en
+    // sí: la celda del rótulo trae su texto suelto ("NPN", "Fecha
+    // Asignación"), y devolver el texto de la celda hacía que un rótulo se
+    // colara como si fuera el valor del campo anterior.
+    for (const el of contenedor.querySelectorAll('span, div, label, b, font, p')) {
+      if (el.children.length > 0) continue;
+      const t = (el.textContent || '').trim();
+      if (t) return t;
+    }
+    return null;
   };
 
   /**
@@ -269,6 +275,9 @@ function LECTOR_FICHA() {
           if (v) return v;
           continue;
         }
+        // Nunca una celda: ahí vive el RÓTULO de la fila siguiente, no el
+        // valor. Los valores de edis están en <span>.
+        if (tag === 'TD' || tag === 'TH') continue;
         if (cand.children.length > 0) continue;
         const t = (cand.textContent || '').trim();
         if (t) return t;
@@ -346,7 +355,10 @@ function LECTOR_FICHA() {
     fechaRadicacion: leer('Fecha Radicación'),
     usuarioRadica,
     clase: leer('Clase'),
-    npn: leer('NPN') || npnPorFormato(),
+    // El formato MANDA sobre la etiqueta: "01-01-00-00-0834-0901-9-00-00-0115"
+    // no lo puede producir ningún otro campo, mientras que buscar por el
+    // rótulo "NPN" sí llegó a devolver el rótulo vecino ("Fecha Asignación").
+    npn: npnPorFormato() || leer('NPN'),
     interesado: leer('Nombre'),
     // Datos de contacto del interesado: son los que el acta de visita pide y
     // que no están en la bandeja.
@@ -378,8 +390,9 @@ function LECTOR_FICHA() {
  *  1. La "Fecha envío a revisión" REAL de un trámite, cuando el robot
  *     detecta que salió de la bandeja tras una brecha larga sin sincronizar
  *     (asumir "hoy" sería incorrecto en ese caso).
- *  2. Quién radicó un número dado, para contar las radicaciones propias del
- *     personal de ventanilla recorriendo los números consecutivos.
+ *  2. El NPN (número predial) de un radicado, para armar la relación que se
+ *     exporta a Excel, y los datos de contacto del interesado que necesita
+ *     el acta de visita.
  *
  * Cualquier usuario puede consultar cualquier radicado: basta con el número.
  */
