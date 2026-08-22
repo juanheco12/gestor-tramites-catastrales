@@ -337,16 +337,22 @@ function LECTOR_FICHA() {
    * la tabla. Es el respaldo que queda cuando los otros métodos fallan.
    */
   const npnPorFormato = () => {
-    const patron = /^\d{2}-\d{2}-\d{2}-\d{2}-\d{4}-\d{4}-\d-\d{2}-\d{2}-\d{4}$/;
+    // Solo dígitos y guiones, largo de número predial y al menos 9 grupos:
+    // "01-01-00-00-0834-0901-9-00-00-0115", "02-00-00-00-0062-0000-0-00-00-0000".
+    // Ningún otro dato de la pantalla tiene esa forma: ni las fechas
+    // (25/03/2026), ni el radicado (2026-2489), ni un rótulo, ni el texto
+    // "Label" con que ASP.NET pinta un campo que todavía no llenó.
+    const esNpn = (v) =>
+      /^[0-9-]{25,45}$/.test(v) && v.split('-').length >= 9;
     for (const campo of document.querySelectorAll('input, textarea')) {
       const v = (campo.value || '').trim();
-      if (patron.test(v)) return v;
+      if (esNpn(v)) return v;
     }
-    // En edis el NPN vive en un <span>, no en un <input>.
+    // Según la pantalla, el NPN puede venir en un <span> en vez de un <input>.
     for (const el of document.querySelectorAll('span, td, div, label, b, font')) {
       if (el.children.length > 0) continue;
       const v = (el.textContent || '').trim();
-      if (patron.test(v)) return v;
+      if (esNpn(v)) return v;
     }
     return '';
   };
@@ -355,10 +361,12 @@ function LECTOR_FICHA() {
     fechaRadicacion: leer('Fecha Radicación'),
     usuarioRadica,
     clase: leer('Clase'),
-    // El formato MANDA sobre la etiqueta: "01-01-00-00-0834-0901-9-00-00-0115"
-    // no lo puede producir ningún otro campo, mientras que buscar por el
-    // rótulo "NPN" sí llegó a devolver el rótulo vecino ("Fecha Asignación").
-    npn: npnPorFormato() || leer('NPN'),
+    // SOLO por formato. Buscar por el rótulo "NPN" devolvió en distintos
+    // momentos el rótulo vecino ("Fecha Asignación") y el texto "Label" de un
+    // campo aún sin llenar; y como esos valores no están vacíos, la espera se
+    // cortaba dando por bueno un dato falso. Un NPN se reconoce por su forma
+    // o no se reconoce: es preferible dejarlo en blanco a inventarlo.
+    npn: npnPorFormato(),
     interesado: leer('Nombre'),
     // Datos de contacto del interesado: son los que el acta de visita pide y
     // que no están en la bandeja.
