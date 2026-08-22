@@ -169,7 +169,14 @@ function LECTOR_FICHA() {
       if (esBoton(campo)) continue;
       return (campo.value || '').trim();
     }
-    return null;
+    // edis NO usa <input> para los campos de solo lectura de la ficha: los
+    // pinta como <span> con borde para que parezcan cajas
+    // (<span id="..._LblNpn" class="border rounded">01-01-...</span>).
+    // Buscar solo input.value dejaba vacíos NPN, clase, estado, fecha de
+    // radicación y usuario que radica; los datos del interesado sí se leían
+    // porque esos sí son campos editables de verdad.
+    const texto = (contenedor.innerText || contenedor.textContent || '').trim();
+    return texto || null;
   };
 
   /**
@@ -250,14 +257,21 @@ function LECTOR_FICHA() {
       const el = todos[i];
       if (el.children.length > 0) continue; // solo el nodo más interno
       if (normalizar(el.textContent) !== objetivo) continue;
-      // Desde ahí, el primer control con valor en orden de documento.
+      // Desde ahí, el primer valor en orden de documento. Se aceptan tanto
+      // controles como elementos de solo texto: en edis los campos de la
+      // ficha son <span>, no <input>.
       for (let j = i + 1; j < todos.length && j <= i + 30; j++) {
         const cand = todos[j];
         const tag = cand.tagName;
-        if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') continue;
-        if (esBoton(cand)) continue;
-        const v = (cand.value || '').trim();
-        if (v) return v;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+          if (esBoton(cand)) continue;
+          const v = (cand.value || '').trim();
+          if (v) return v;
+          continue;
+        }
+        if (cand.children.length > 0) continue;
+        const t = (cand.textContent || '').trim();
+        if (t) return t;
       }
     }
     return '';
@@ -317,6 +331,12 @@ function LECTOR_FICHA() {
     const patron = /^\d{2}-\d{2}-\d{2}-\d{2}-\d{4}-\d{4}-\d-\d{2}-\d{2}-\d{4}$/;
     for (const campo of document.querySelectorAll('input, textarea')) {
       const v = (campo.value || '').trim();
+      if (patron.test(v)) return v;
+    }
+    // En edis el NPN vive en un <span>, no en un <input>.
+    for (const el of document.querySelectorAll('span, td, div, label, b, font')) {
+      if (el.children.length > 0) continue;
+      const v = (el.textContent || '').trim();
       if (patron.test(v)) return v;
     }
     return '';
