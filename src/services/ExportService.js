@@ -89,8 +89,10 @@ class ExportService {
     }
 
     this._ajustarAnchos(hoja);
-    const ruta = path.join(path.dirname(path.resolve(this.config.app.exportXlsxPath)), 'Visitas.xlsx');
-    await workbook.xlsx.writeFile(ruta);
+    const ruta = await this._escribirLibro(
+      workbook,
+      path.join(path.dirname(path.resolve(this.config.app.exportXlsxPath)), 'Visitas.xlsx')
+    );
     this.logger.info(`Excel de visitas exportado: ${ruta} (${visitas.length} trámites)`);
     return ruta;
   }
@@ -118,8 +120,7 @@ class ExportService {
     this._hojaBitacora(workbook, tramites, extrasPorTramite);
     this._hojaDetalle(workbook, tramites, extrasPorTramite, [...clavesExtra].sort());
 
-    const ruta = path.resolve(this.config.app.exportXlsxPath);
-    await workbook.xlsx.writeFile(ruta);
+    const ruta = await this._escribirLibro(workbook, path.resolve(this.config.app.exportXlsxPath));
     this.logger.info(`Excel exportado: ${ruta} (${tramites.length} trámites)`);
     return ruta;
   }
@@ -205,14 +206,49 @@ class ExportService {
 
     this._ajustarAnchos(hoja);
     const sello = new Date().toISOString().slice(0, 10);
-    const ruta = path.join(
-      path.dirname(path.resolve(this.config.app.exportXlsxPath)),
-      `NPN ${sello}.xlsx`
+    const ruta = await this._escribirLibro(
+      workbook,
+      path.join(path.dirname(path.resolve(this.config.app.exportXlsxPath)), `NPN ${sello}.xlsx`)
     );
-    await workbook.xlsx.writeFile(ruta);
     const conNpn = filas.filter((f) => f.npn).length;
     this.logger.info(`Excel de NPN exportado: ${ruta} (${conNpn} de ${filas.length} con NPN)`);
     return ruta;
+  }
+
+  /**
+   * Escribe el libro, buscando otro nombre si el archivo está abierto.
+   *
+   * Windows bloquea el archivo mientras Excel lo tiene abierto, y consultar
+   * dos veces seguidas es lo normal: la segunda fallaba con "EBUSY: resource
+   * busy or locked" y se perdía la consulta entera. Antes que eso, se guarda
+   * con un nombre nuevo.
+   *
+   * @returns {Promise<string>} ruta donde quedó realmente
+   */
+  async _escribirLibro(workbook, rutaPreferida) {
+    const dir = path.dirname(rutaPreferida);
+    const ext = path.extname(rutaPreferida);
+    const base = path.basename(rutaPreferida, ext);
+
+    for (let intento = 0; intento < 30; intento++) {
+      const ruta = intento === 0 ? rutaPreferida : path.join(dir, `${base} (${intento})${ext}`);
+      try {
+        await workbook.xlsx.writeFile(ruta);
+        if (intento > 0) {
+          this.logger.warn(
+            `"${base}${ext}" estaba abierto en Excel; se guardó como "${path.basename(ruta)}".`
+          );
+        }
+        return ruta;
+      } catch (error) {
+        const ocupado = ['EBUSY', 'EPERM', 'EACCES'].includes(error.code);
+        if (!ocupado) throw error;
+      }
+    }
+    throw new Error(
+      `No se pudo guardar el Excel: hay demasiados archivos "${base}" abiertos. ` +
+      'Cierre Excel e intente de nuevo.'
+    );
   }
 
   _encabezado(hoja, etiquetas) {

@@ -114,7 +114,11 @@ class GestionRepository {
             "fecha_realizacion = COALESCE(fecha_realizacion, date('now', 'localtime'))",
           ];
           if (!esJuridica) {
-            setsAuto.push("observacion = 'OK'", "analisis = 'OK'");
+            // El análisis solo se COMPLETA si quedó vacío. Ponerlo siempre en
+            // "OK" borraba lo que el compañero acababa de escribir en la
+            // ficha (típicamente "MOTIVADA"): llenaba el formulario, guardaba,
+            // y la motivada desaparecía.
+            setsAuto.push("observacion = 'OK'", "analisis = COALESCE(NULLIF(analisis, ''), 'OK')");
           }
           if (campos.mi_estado === undefined) setsAuto.push("mi_estado = 'enviado'");
           this.db
@@ -229,23 +233,15 @@ class GestionRepository {
       for (const id of ids) {
         const fecha = fechasPorId[id] || null;
 
-        // El análisis se decide igual que la observación: al enviar, un
-        // trámite normal queda en "OK". Antes solo se llenaba si estaba
-        // vacío, así que una etiqueta de un ciclo anterior (p. ej.
-        // "MOTIVADA" de cuando lo devolvieron) se quedaba pegada aunque el
-        // trámite ya se hubiera vuelto a enviar.
+        // El análisis solo se COMPLETA si quedó vacío; lo que el ejecutor
+        // haya escrito NUNCA se pisa. Ponerlo siempre en "OK" borraba tanto
+        // la motivación de un caso jurídico como la "MOTIVADA" que el
+        // compañero acababa de anotar en la ficha: llenaba el formulario y,
+        // al salir el trámite de la bandeja, la nota desaparecía.
         //
-        // La excepción es la revisión JURÍDICA: ahí el análisis es la
-        // motivación real ("REV.JURIDICA/ NO PROCEDE", "SOLICITANDO
-        // DOCUMENTOS") y borrarla perdería el trabajo del jurídico. Se mira
-        // ANTES de actualizar, porque este mismo UPDATE pisa la observación.
-        const actual = this.db
-          .prepare('SELECT observacion, estado_seguimiento, analisis FROM tramites_gestion WHERE tramite_id = ?')
-          .get(id);
-        const esJuridica = Boolean(actual) && normalizar(
-          `${actual.observacion || ''} ${actual.estado_seguimiento || ''} ${actual.analisis || ''}`
-        ).includes('JURIDIC');
-
+        // Las etiquetas viejas que habían quedado pegadas de ciclos
+        // anteriores ya se limpiaron una sola vez con la migración de la
+        // v1.19.1, así que preservar aquí no las trae de vuelta.
         const r = this.db
           .prepare(`
             UPDATE tramites_gestion
@@ -253,15 +249,13 @@ class GestionRepository {
                 fecha_realizacion = COALESCE(fecha_realizacion, COALESCE(@fecha, date('now', 'localtime'))),
                 fecha_envio = COALESCE(fecha_envio, COALESCE(@fecha, date('now', 'localtime'))),
                 observacion = 'OK',
-                analisis = CASE WHEN @juridica = 1
-                                THEN COALESCE(NULLIF(analisis, ''), 'OK')
-                                ELSE 'OK' END,
+                analisis = COALESCE(NULLIF(analisis, ''), 'OK'),
                 estado_seguimiento = 'EN REVISION',
                 actualizado_en = datetime('now', 'localtime')
             WHERE mi_estado NOT IN ('enviado', 'finalizado')
               AND tramite_id = @id
           `)
-          .run({ id, fecha, juridica: esJuridica ? 1 : 0 });
+          .run({ id, fecha });
         cambiados += r.changes;
       }
       return cambiados;

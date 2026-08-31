@@ -263,17 +263,17 @@ function LECTOR_FICHA() {
       const el = todos[i];
       if (el.children.length > 0) continue; // solo el nodo más interno
       if (normalizar(el.textContent) !== objetivo) continue;
-      // Desde ahí, el primer valor en orden de documento. Se aceptan tanto
-      // controles como elementos de solo texto: en edis los campos de la
-      // ficha son <span>, no <input>.
+      // Desde ahí, el PRIMER control que aparezca es el de este campo, y su
+      // valor se devuelve aunque venga vacío. Antes se saltaban los vacíos y
+      // se seguía buscando, así que un campo en blanco terminaba tomando el
+      // valor de OTRO campo más abajo: con el interesado vacío, el acta salía
+      // con el "False" del selector de "Acepta notificaciones por email".
       for (let j = i + 1; j < todos.length && j <= i + 30; j++) {
         const cand = todos[j];
         const tag = cand.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
           if (esBoton(cand)) continue;
-          const v = (cand.value || '').trim();
-          if (v) return v;
-          continue;
+          return (cand.value || '').trim();
         }
         // Nunca una celda: ahí vive el RÓTULO de la fila siguiente, no el
         // valor. Los valores de edis están en <span>.
@@ -337,22 +337,30 @@ function LECTOR_FICHA() {
    * la tabla. Es el respaldo que queda cuando los otros métodos fallan.
    */
   const npnPorFormato = () => {
-    // Solo dígitos y guiones, largo de número predial y al menos 9 grupos:
-    // "01-01-00-00-0834-0901-9-00-00-0115", "02-00-00-00-0062-0000-0-00-00-0000".
-    // Ningún otro dato de la pantalla tiene esa forma: ni las fechas
-    // (25/03/2026), ni el radicado (2026-2489), ni un rótulo, ni el texto
-    // "Label" con que ASP.NET pinta un campo que todavía no llenó.
-    const esNpn = (v) =>
-      /^[0-9-]{25,45}$/.test(v) && v.split('-').length >= 9;
+    // Se EXTRAEN los números prediales del texto, en vez de exigir que todo el
+    // campo sea uno solo: un trámite puede abarcar VARIOS predios y edis los
+    // lista separados por coma ("01-01-...-0022-..., 01-01-...-0021-..."). Al
+    // pedir que la celda entera fuera un único NPN se descartaba la celda
+    // completa, y esos trámites quedaban sin NPN. Si hay varios se devuelven
+    // todos: son todos del trámite.
+    //
+    // La forma es inconfundible, así que nada más de la pantalla se cuela: ni
+    // las fechas (25/03/2026), ni el radicado (2026-2489), ni un rótulo, ni el
+    // texto "Label" con que ASP.NET pinta un campo que todavía no llenó.
+    const extraer = (texto) => {
+      const hallados = String(texto || '')
+        .match(/\d{2}-\d{2}-\d{2}-\d{2}-\d{4}-\d{4}-\d-\d{2}-\d{2}-\d{4}/g);
+      return hallados ? [...new Set(hallados)].join(', ') : '';
+    };
     for (const campo of document.querySelectorAll('input, textarea')) {
-      const v = (campo.value || '').trim();
-      if (esNpn(v)) return v;
+      const v = extraer(campo.value);
+      if (v) return v;
     }
     // Según la pantalla, el NPN puede venir en un <span> en vez de un <input>.
     for (const el of document.querySelectorAll('span, td, div, label, b, font')) {
       if (el.children.length > 0) continue;
-      const v = (el.textContent || '').trim();
-      if (esNpn(v)) return v;
+      const v = extraer(el.textContent);
+      if (v) return v;
     }
     return '';
   };
