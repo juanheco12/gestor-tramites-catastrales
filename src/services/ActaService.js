@@ -2,8 +2,30 @@
 
 const fs = require('fs');
 const path = require('path');
-const JSZip = require('jszip');
 const { RUTA_RAIZ } = require('../config/config');
+
+/**
+ * jszip se carga SOLO cuando se va a generar un acta, no al arrancar.
+ *
+ * Si el programa se instala dentro de OneDrive, "Liberar espacio" puede dejar
+ * archivos del propio programa como marcadores que ya no están en el disco.
+ * Con el require arriba, un archivo faltante de jszip tumbaba el arranque
+ * entero con un error de JavaScript y no se podía ni abrir la aplicación.
+ * Cargándolo aquí, lo único que falla es generar el acta, con un mensaje que
+ * dice qué hacer.
+ */
+function cargarJSZip() {
+  try {
+    return require('jszip');
+  } catch (error) {
+    throw new Error(
+      'Falta un archivo del programa para armar el Word (jszip). ' +
+      'Suele pasar cuando el programa quedó instalado dentro de OneDrive: ' +
+      'reinstálelo en la carpeta que propone el instalador, fuera de OneDrive. ' +
+      `Detalle: ${error.message.split('\n')[0]}`
+    );
+  }
+}
 
 const MESES = [
   'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
@@ -81,7 +103,7 @@ class ActaService {
       );
     }
 
-    const zip = await JSZip.loadAsync(fs.readFileSync(this.rutaPlantilla));
+    const zip = await cargarJSZip().loadAsync(fs.readFileSync(this.rutaPlantilla));
     const leer = async (parte) => {
       const f = zip.file(parte);
       if (!f) throw new Error(`La plantilla no tiene la parte ${parte}.`);
@@ -204,7 +226,7 @@ class ActaService {
     }
 
     const valores = this._valores(tramite, interesado);
-    const zip = await JSZip.loadAsync(fs.readFileSync(this.rutaPlantilla));
+    const zip = await cargarJSZip().loadAsync(fs.readFileSync(this.rutaPlantilla));
 
     let reemplazosTotales = 0;
     for (const parte of PARTES) {
