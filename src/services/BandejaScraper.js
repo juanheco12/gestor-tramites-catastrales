@@ -179,10 +179,13 @@ class BandejaScraper {
    * @param {import('playwright').Page} page
    * @returns {Promise<string|null>} Selector que se pulsó, o null
    */
-  async _abrirBandeja(page) {
+  async _abrirBandeja(page, omitir = new Set()) {
     const candidatos = this.config.bandeja.accionesApertura || [];
 
     for (const selector of candidatos) {
+      // Los ya probados se saltan: sin esto, al reintentar se vuelve a pulsar
+      // el primero una y otra vez y nunca se llega a los siguientes.
+      if (omitir.has(selector)) continue;
       for (const marco of this._todosLosMarcos(page)) {
         try {
           const elemento = marco.locator(selector).first();
@@ -201,6 +204,74 @@ class BandejaScraper {
       }
     }
     return null;
+  }
+
+  /**
+   * Prueba las acciones de apertura UNA POR UNA hasta que aparezca la
+   * cuadrícula, recargando la bandeja entre intentos.
+   *
+   * Antes se pulsaba el primer selector que existiera y, si eso no abría la
+   * cuadrícula, se daba por perdido. El problema es que un mismo id puede
+   * significar cosas distintas según la pantalla: a un compañero,
+   * "BtnBuscaRad" existía pero era la búsqueda de la pantalla de predio, así
+   * que el clic lo llevaba a otro lado y ya no había forma de volver.
+   * Recargar y seguir probando convierte ese callejón sin salida en un
+   * intento más.
+   *
+   * @returns {Promise<object|null>} la cuadrícula encontrada, o null
+   */
+  async _abrirBandejaConReintentos(page, esperaMaxMs) {
+    const candidatos = this.config.bandeja.accionesApertura || [];
+    const url = this.config.bandeja.url;
+    const timeout = this.config.browser.timeoutMs;
+    const intentados = new Set();
+
+    for (let vuelta = 0; vuelta < candidatos.length; vuelta++) {
+      const accion = await this._abrirBandeja(page, intentados);
+      if (!accion) break;
+      intentados.add(accion);
+
+      this.onProgreso('Esperando que cargue la cuadrícula TRÁMITES ASIGNADOS...');
+      const encontrada = await this._buscarTabla(page, esperaMaxMs);
+      if (encontrada) return encontrada;
+
+      // Esa acción no era: se vuelve a la bandeja para probar la siguiente
+      // desde el mismo punto de partida.
+      if (vuelta < candidatos.length - 1) {
+        this.logger.warn(`La acción ${accion} no abrió la cuadrícula; se prueba la siguiente.`);
+        try {
+          await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+        } catch (error) {
+          this.logger.warn(`No se pudo volver a la bandeja: ${error.message.split('\n')[0]}`);
+          break;
+        }
+        // Ya de vuelta, puede que la cuadrícula esté sin pulsar nada.
+        const directa = await this._buscarTabla(page, 3000);
+        if (directa) return directa;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Guarda la página que el robot tiene delante cuando no encuentra la
+   * cuadrícula. El listado de tablas y botones del mensaje de error ayuda,
+   * pero no alcanza para escribir el selector correcto: con el HTML sí.
+   * @returns {Promise<string>} ruta del archivo, o '' si no se pudo
+   */
+  async _guardarPagina(page, nombre) {
+    try {
+      const carpeta = path.join(path.dirname(this.config.app.dbPath), 'diagnostico');
+      fs.mkdirSync(carpeta, { recursive: true });
+      const base = path.join(carpeta, String(nombre).replace(/[\\/:*?"<>|]/g, '-'));
+      fs.writeFileSync(`${base}.html`, await page.content(), 'utf8');
+      await page.screenshot({ path: `${base}.png`, fullPage: true }).catch(() => {});
+      this.logger.info(`Diagnóstico de la bandeja guardado: ${base}.html`);
+      return `${base}.html`;
+    } catch (error) {
+      this.logger.warn(`No se pudo guardar el diagnóstico de la bandeja: ${error.message}`);
+      return '';
+    }
   }
 
   /**
@@ -251,17 +322,15 @@ class BandejaScraper {
     let encontrada = await this._buscarTabla(page, 4000);
 
     // 2) Si no, abrir la bandeja (lupa de "Radicación") y volver a buscar.
+    //    Se prueban TODAS las acciones, no solo la primera que exista.
     if (!encontrada) {
       this.onProgreso('Pulsando la lupa de Radicación para abrir TRÁMITES ASIGNADOS...');
-      const accion = await this._abrirBandeja(page);
-      if (accion) {
-        this.onProgreso('Esperando que cargue la cuadrícula TRÁMITES ASIGNADOS...');
-        encontrada = await this._buscarTabla(page, timeout);
-      }
+      encontrada = await this._abrirBandejaConReintentos(page, timeout);
     }
 
     if (!encontrada) {
       const clicables = await this._inventarioClicables(page);
+      const guardado = await this._guardarPagina(page, `BANDEJA ${new Date().toISOString().slice(0, 10)}`);
       throw new Error(
         'No se encontró la cuadrícula de trámites, ni siquiera tras intentar abrir la bandeja. ' +
         (this.ultimoDiagnostico.length > 0
@@ -270,7 +339,9 @@ class BandejaScraper {
         (clicables.length > 0
           ? `Botones detectados en la página: ${clicables.join(', ')}. `
           : '') +
-        'Ajuste bandeja.accionesApertura o bandeja.columnas en config/app.config.json.'
+        (guardado
+          ? `Se guardó la página que vio el robot en: ${guardado} — envíela para revisarla.`
+          : 'Ajuste bandeja.accionesApertura o bandeja.columnas en config/app.config.json.')
       );
     }
 
