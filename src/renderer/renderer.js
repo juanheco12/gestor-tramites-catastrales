@@ -1179,6 +1179,90 @@ document.getElementById('agregar-guardar').addEventListener('click', async () =>
   await cargarTramites();
 });
 
+/* ------------------------- agregar varios (masivo) ------------------------- */
+
+const modalLote = document.getElementById('modal-agregar-lote');
+const loteEstado = document.getElementById('lote-estado');
+const loteTexto = document.getElementById('lote-radicados');
+const loteObsPreset = document.getElementById('lote-observacion-preset');
+const loteObsLibre = document.getElementById('lote-observacion');
+
+/** Admite uno por línea, o varios separados por coma, punto y coma o espacios. */
+const radicadosDeLote = (texto) =>
+  texto.split(/[\s,;]+/).map((r) => r.trim()).filter(Boolean);
+
+function refrescarConteoLote() {
+  const n = new Set(radicadosDeLote(loteTexto.value)).size;
+  document.getElementById('lote-conteo').textContent =
+    n === 0 ? 'Pegue aquí los radicados.' : `${n} radicado(s) distintos en la lista.`;
+}
+
+/** La observación puede ser una de las rápidas o una escrita a mano. */
+function observacionDelLote() {
+  return loteObsPreset.value === '__otra__'
+    ? loteObsLibre.value.trim()
+    : loteObsPreset.value;
+}
+
+loteTexto.addEventListener('input', refrescarConteoLote);
+loteObsPreset.addEventListener('change', () => {
+  loteObsLibre.classList.toggle('oculto', loteObsPreset.value !== '__otra__');
+  if (loteObsPreset.value === '__otra__') loteObsLibre.focus();
+});
+
+document.getElementById('btn-agregar-lote').addEventListener('click', () => {
+  loteTexto.value = '';
+  document.getElementById('lote-tramite').value = '';
+  loteObsPreset.value = 'PARTE GRAFICA';
+  loteObsLibre.value = '';
+  loteObsLibre.classList.add('oculto');
+  document.getElementById('lote-estado-seguimiento').value = 'EN ESPERA';
+  document.getElementById('lote-fecha-realizacion').value = new Date().toISOString().slice(0, 10);
+  loteEstado.textContent = '';
+  refrescarConteoLote();
+  modalLote.classList.remove('oculto');
+  loteTexto.focus();
+});
+
+document.getElementById('lote-cancelar').addEventListener('click', () => {
+  modalLote.classList.add('oculto');
+});
+
+document.getElementById('lote-guardar').addEventListener('click', async () => {
+  const boton = document.getElementById('lote-guardar');
+  const radicados = radicadosDeLote(loteTexto.value);
+  if (radicados.length === 0) {
+    loteEstado.textContent = 'Pegue al menos un radicado.';
+    return;
+  }
+
+  const comunes = {
+    tramite: document.getElementById('lote-tramite').value.trim(),
+    observacion: observacionDelLote(),
+    estado_seguimiento: document.getElementById('lote-estado-seguimiento').value.trim(),
+    fecha_realizacion: document.getElementById('lote-fecha-realizacion').value,
+  };
+
+  boton.disabled = true;
+  loteEstado.textContent = 'Agregando...';
+  try {
+    const r = await window.bandejaApi.agregarHistoricoLote({ radicados, comunes });
+    if (!r.ok) {
+      loteEstado.textContent = `Error: ${r.error}`;
+      return;
+    }
+    const partes = [];
+    if (r.creados.length > 0) partes.push(`${r.creados.length} nuevo(s)`);
+    if (r.completados.length > 0) partes.push(`${r.completados.length} ya existían (se completaron)`);
+    if (r.fallidos.length > 0) partes.push(`${r.fallidos.length} con error: ${r.fallidos.map((f) => f.radicado).join(', ')}`);
+    modalLote.classList.add('oculto');
+    mostrarEstado('exito', `${r.total} radicado(s): ${partes.join(', ')}.`);
+    await cargarTramites();
+  } finally {
+    boton.disabled = false;
+  }
+});
+
 /* ------------------------- mi perfil ------------------------- */
 
 const modalPerfil = document.getElementById('modal-perfil');

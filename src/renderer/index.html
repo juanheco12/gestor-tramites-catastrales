@@ -147,6 +147,7 @@
       </div>
       <input id="buscador-historico" type="search" placeholder="Buscar por radicado, FMI, trámite u observación..." />
       <button id="btn-agregar-historico" class="btn-secundario">Agregar trámite</button>
+      <button id="btn-agregar-lote" class="btn-secundario">Agregar varios</button>
     </section>
     <main>
       <section class="panel">
@@ -456,6 +457,61 @@
       <div class="modal-botones">
         <button id="agregar-cancelar" class="btn-secundario">Cancelar</button>
         <button id="agregar-guardar" class="btn-primario">Agregar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL AGREGAR VARIOS (masivo) ==================== -->
+  <div id="modal-agregar-lote" class="modal oculto">
+    <div class="modal-caja">
+      <h2>Agregar varios trámites</h2>
+      <p class="modal-texto">
+        Pegue los radicados (uno por línea) y elija los datos comunes para
+        todos. Si un radicado ya existe, se completa su ficha en vez de
+        duplicarlo.
+      </p>
+      <label>Radicados
+        <textarea id="lote-radicados" rows="6"
+          placeholder="Uno por línea o separados por coma:&#10;2026-1234&#10;2026-1235&#10;2026-1236"></textarea>
+      </label>
+      <p class="modal-texto" id="lote-conteo">—</p>
+
+      <label>Trámite (para todos)
+        <select id="lote-tramite">
+          <option value="">Seleccione…</option>
+          <option value="1-Mutacion de Primera-">1-Mutacion de Primera-</option>
+          <option value="2-Mutación de Segunda-">2-Mutación de Segunda-</option>
+          <option value="3-Mutación de Tercera-">3-Mutación de Tercera-</option>
+          <option value="10-Revisión de avalúo-">10-Revisión de avalúo-</option>
+          <option value="5-Mutación de Quinta-">5-Mutación de Quinta-</option>
+          <option value="6-Rectificación general de datos-">6-Rectificación general de datos-</option>
+          <option value="7-Cancelación de predio-">7-Cancelación de predio-</option>
+          <option value="8-Complementación-">8-Complementación-</option>
+        </select>
+      </label>
+
+      <label>Observación (para todos)
+        <select id="lote-observacion-preset">
+          <option value="PARTE GRAFICA">PARTE GRAFICA</option>
+          <option value="EN ESPERA">EN ESPERA</option>
+          <option value="PENDIENTE DOCUMENTOS">PENDIENTE DOCUMENTOS</option>
+          <option value="REVISION JURIDICA">REVISION JURIDICA</option>
+          <option value="__otra__">Otra… (escribir)</option>
+        </select>
+      </label>
+      <input id="lote-observacion" type="text" class="oculto" placeholder="Escriba la observación" />
+
+      <label>Estado de seguimiento (para todos)
+        <input id="lote-estado-seguimiento" type="text" value="EN ESPERA" />
+      </label>
+      <label>Fecha de realización (para todos)
+        <input id="lote-fecha-realizacion" type="date" />
+      </label>
+
+      <p id="lote-estado" class="modal-nota"></p>
+      <div class="modal-botones">
+        <button id="lote-cancelar" class="btn-secundario">Cancelar</button>
+        <button id="lote-guardar" class="btn-primario">Agregar todos</button>
       </div>
     </div>
   </div>

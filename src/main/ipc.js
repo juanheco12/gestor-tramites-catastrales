@@ -18,6 +18,7 @@ const CANALES = {
   IMPORTAR_BITACORA: 'gestion:importar-bitacora',
   POS_LISTAR: 'gestion:pos-listar',
   AGREGAR_HISTORICO: 'gestion:agregar-historico',
+  AGREGAR_HISTORICO_LOTE: 'gestion:agregar-historico-lote',
   ELIMINAR_MANUAL: 'gestion:eliminar-manual',
   EXPORTAR_VISITAS: 'bandeja:exportar-visitas',
   SISTEMA_RESTABLECER: 'sistema:restablecer',
@@ -48,6 +49,7 @@ function registrarIpc(contenedor, obtenerVentana) {
     importService,
     credencialesService,
     actaService,
+    database,
     logger,
   } = contenedor;
 
@@ -166,47 +168,115 @@ function registrarIpc(contenedor, obtenerVentana) {
     }
   });
 
+  /**
+   * Agrega (o completa) UN trámite al histórico. Es la misma lógica que usa
+   * el agregado individual; se comparte para que el ingreso masivo siga
+   * exactamente las mismas reglas (no crear duplicados si el radicado ya
+   * existe, no retroceder un estado ya avanzado, etc.).
+   *
+   * @returns {{creado: boolean}} creado=true si el radicado no existía
+   */
+  const agregarUno = (datos) => {
+    const radicado = String(datos.radicado || '').trim();
+    if (!radicado) throw new Error('El radicado es obligatorio.');
+
+    // Igual que en la bitácora de Excel: si el radicado ya existe (p. ej.
+    // sigue vivo en la bandeja), se usa el MISMO registro en vez de crear
+    // uno nuevo, para que al enviarlo más tarde sea la misma fila la que
+    // se cierre con fecha de envío y "EN REVISION".
+    let tramite = tramiteRepository.buscarPorNumero(radicado);
+    let esNuevo = false;
+    if (!tramite) {
+      const id = tramiteRepository.insertar(
+        { numero_tramite: radicado, tipo: datos.tramite || null, estado: null, fecha: null },
+        null,
+        { origen: 'manual', presenteEnBandeja: 0 }
+      );
+      gestionRepository.asegurar(id);
+      tramite = { id };
+      esNuevo = true;
+    }
+
+    const actual = gestionRepository.obtener(tramite.id);
+    const campos = {
+      fmi: datos.fmi || '',
+      // NULL, no "": si queda vacío, el respaldo automático de
+      // marcarEnviados (COALESCE) debe poder completarlo al enviarse.
+      fecha_realizacion: datos.fecha_realizacion || null,
+      estado_seguimiento: datos.estado_seguimiento || 'EN ESPERA',
+      observacion: datos.observacion || '',
+    };
+    // No se retrocede un estado ya avanzado (visita/enviado/devuelto/finalizado);
+    // en cualquier otro caso, registrar la nota "en espera" implica Estudiado.
+    if (esNuevo || actual.mi_estado === 'por_estudiar') {
+      campos.mi_estado = 'estudiado';
+    }
+
+    gestionRepository.actualizar(tramite.id, campos);
+    return { creado: esNuevo };
+  };
+
   ipcMain.handle(CANALES.AGREGAR_HISTORICO, (_evento, datos) => {
     try {
-      const radicado = String(datos.radicado || '').trim();
-      if (!radicado) throw new Error('El radicado es obligatorio.');
-
-      // Igual que en la bitácora de Excel: si el radicado ya existe (p. ej.
-      // sigue vivo en la bandeja), se usa el MISMO registro en vez de crear
-      // uno nuevo, para que al enviarlo más tarde sea la misma fila la que
-      // se cierre con fecha de envío y "EN REVISION".
-      let tramite = tramiteRepository.buscarPorNumero(radicado);
-      let esNuevo = false;
-      if (!tramite) {
-        const id = tramiteRepository.insertar(
-          { numero_tramite: radicado, tipo: datos.tramite || null, estado: null, fecha: null },
-          null,
-          { origen: 'manual', presenteEnBandeja: 0 }
-        );
-        gestionRepository.asegurar(id);
-        tramite = { id };
-        esNuevo = true;
-      }
-
-      const actual = gestionRepository.obtener(tramite.id);
-      const campos = {
-        fmi: datos.fmi || '',
-        // NULL, no "": si queda vacío, el respaldo automático de
-        // marcarEnviados (COALESCE) debe poder completarlo al enviarse.
-        fecha_realizacion: datos.fecha_realizacion || null,
-        estado_seguimiento: datos.estado_seguimiento || 'EN ESPERA',
-        observacion: datos.observacion || '',
-      };
-      // No se retrocede un estado ya avanzado (visita/enviado/devuelto/finalizado);
-      // en cualquier otro caso, registrar la nota "en espera" implica Estudiado.
-      if (esNuevo || actual.mi_estado === 'por_estudiar') {
-        campos.mi_estado = 'estudiado';
-      }
-
-      gestionRepository.actualizar(tramite.id, campos);
-      return { ok: true, creado: esNuevo };
+      return { ok: true, ...agregarUno(datos) };
     } catch (error) {
       logger.error(`IPC agregar histórico: ${error.message}`);
+      return { ok: false, error: error.message };
+    }
+  });
+
+  /**
+   * Agrega varios trámites de una sola vez. El tipo, la observación, el
+   * estado de seguimiento y la fecha son COMUNES a todos; lo único que
+   * cambia por fila es el radicado. Un radicado que falla no detiene a los
+   * demás: se anota y se sigue.
+   */
+  ipcMain.handle(CANALES.AGREGAR_HISTORICO_LOTE, (_evento, { radicados = [], comunes = {} } = {}) => {
+    try {
+      const anioActual = String(new Date().getFullYear());
+      // Se acepta el número solo ("1234"): en la oficina se habla del
+      // radicado sin el año. Y se descartan repetidos.
+      const vistos = new Set();
+      const lista = [];
+      for (const crudo of radicados) {
+        let numero = String(crudo).trim();
+        if (!numero) continue;
+        if (/^\d+$/.test(numero)) numero = `${anioActual}-${numero}`;
+        if (vistos.has(numero)) continue;
+        vistos.add(numero);
+        lista.push(numero);
+      }
+
+      if (lista.length === 0) {
+        return { ok: false, error: 'No se recibió ningún radicado válido.' };
+      }
+
+      const creados = [];
+      const completados = [];
+      const fallidos = [];
+      // Todo dentro de UNA transacción: si algo revienta a la mitad, no
+      // quedan la mitad de los trámites agregados y la otra mitad no.
+      const aplicar = database.transaccion(() => {
+        for (const radicado of lista) {
+          try {
+            const r = agregarUno({ ...comunes, radicado });
+            (r.creado ? creados : completados).push(radicado);
+          } catch (error) {
+            fallidos.push({ radicado, error: error.message });
+          }
+        }
+      });
+      aplicar();
+
+      return {
+        ok: true,
+        total: lista.length,
+        creados,
+        completados,
+        fallidos,
+      };
+    } catch (error) {
+      logger.error(`IPC agregar histórico en lote: ${error.message}`);
       return { ok: false, error: error.message };
     }
   });
