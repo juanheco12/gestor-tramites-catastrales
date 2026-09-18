@@ -176,22 +176,20 @@ class MigracionTramiteService {
       `Formulario ubicado (${ubicados.estrategia}): ids=${(ubicados.ids || []).join(', ')}`
     );
 
-    // La página de resolución deshabilita los campos cuando ya tiene un
-    // trámite cargado. Se quitan disabled/readonly para poder escribir.
-    await page.evaluate(() => {
+    // Poner valores directamente con JS (funciona incluso con campos disabled).
+    await page.evaluate(({ anio, numero }) => {
       for (const campo of document.querySelectorAll('[data-robot-campo]')) {
         campo.removeAttribute('disabled');
         campo.removeAttribute('readonly');
-        if (campo.tagName === 'INPUT') campo.value = '';
       }
-    });
+      const a = document.querySelector('[data-robot-campo="anio"]');
+      const n = document.querySelector('[data-robot-campo="numero"]');
+      if (a) { a.value = ''; a.value = anio; }
+      if (n) { n.value = ''; n.value = numero; }
+    }, partes);
 
     const campoAnio = page.locator('[data-robot-campo="anio"]');
     const campoNumero = page.locator('[data-robot-campo="numero"]');
-    await campoAnio.waitFor({ state: 'visible', timeout: 5000 });
-    await campoAnio.fill(partes.anio);
-    await campoNumero.fill(partes.numero);
-
     const puestos = {
       anio: await campoAnio.inputValue(),
       numero: await campoNumero.inputValue(),
@@ -203,31 +201,56 @@ class MigracionTramiteService {
     }
 
     await page.locator('[data-robot-campo="buscar"]').click({ timeout: 8000 });
-    await page.waitForLoadState('domcontentloaded', { timeout }).catch(() => {});
-    await page.waitForTimeout(2500);
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(3000);
 
-    this.logger.info(`Trámite ${radicado} abierto en resolución.`);
+    await this._guardarDiagnostico(page, `busqueda-${radicado}`);
+    this.logger.info(`Trámite ${radicado} buscado. URL: ${page.url()}`);
   }
 
   async _irAPestana(page, nombre) {
-    const tab = page.locator('a').filter({ hasText: nombre }).first();
-
-    if (!(await tab.isVisible({ timeout: 3000 }).catch(() => false))) {
-      const enlaces = await page.locator('a').allTextContents();
-      this.logger.warn(
-        `Pestaña "${nombre}" no visible. Enlaces: ` +
-          enlaces
-            .filter((t) => t.trim())
-            .slice(0, 20)
-            .join(' | ')
-      );
-      throw new Error(`No se encontró la pestaña "${nombre}".`);
+    // Estrategia 1: enlaces <a> (ASP.NET LinkButton)
+    let tab = page.locator('a').filter({ hasText: nombre }).first();
+    if (await tab.isVisible({ timeout: 10000 }).catch(() => false)) {
+      await tab.click({ timeout: 5000 });
+      await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
+      await page.waitForTimeout(2000);
+      this.logger.info(`Pestaña "${nombre}" activa.`);
+      return;
     }
 
-    await tab.click({ timeout: 5000 });
-    await page.waitForLoadState('domcontentloaded', { timeout: 12000 }).catch(() => {});
-    await page.waitForTimeout(1500);
-    this.logger.info(`Pestaña "${nombre}" activa.`);
+    // Estrategia 2: cualquier elemento con texto exacto (span, div, td, etc.)
+    tab = page.getByText(nombre, { exact: true }).first();
+    if (await tab.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await tab.click({ timeout: 5000 });
+      await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
+      await page.waitForTimeout(2000);
+      this.logger.info(`Pestaña "${nombre}" activa (texto exacto).`);
+      return;
+    }
+
+    // Estrategia 3: buscar dentro de frames/iframes
+    for (const frame of page.frames()) {
+      if (frame === page.mainFrame()) continue;
+      const tabFrame = frame.locator('a').filter({ hasText: nombre }).first();
+      if (await tabFrame.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await tabFrame.click({ timeout: 5000 });
+        await page.waitForTimeout(3000);
+        this.logger.info(`Pestaña "${nombre}" activa (en frame).`);
+        return;
+      }
+    }
+
+    const enlaces = await page.locator('a').allTextContents().catch(() => []);
+    const frames = page.frames().map((f) => f.url());
+    this.logger.warn(
+      `Pestaña "${nombre}" no visible.\n` +
+        `  Enlaces: ${enlaces.filter((t) => t.trim()).slice(0, 30).join(' | ')}\n` +
+        `  Frames: ${frames.join(', ')}\n` +
+        `  URL: ${page.url()}`
+    );
+    await this._guardarDiagnostico(page, `pestana-no-encontrada-${nombre}`);
+    throw new Error(`No se encontró la pestaña "${nombre}".`);
   }
 
   async _clickBotonAccion(page, texto) {
