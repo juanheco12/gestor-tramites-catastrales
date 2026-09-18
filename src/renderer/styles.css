@@ -862,6 +862,15 @@ input.inp-sector { min-width: 40px; width: 52px; text-align: center; }
 
 .modal.oculto { display: none; }
 
+.migrar-extras { margin-top: 4px; }
+.migrar-extras summary {
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--color-texto-secundario);
+}
+.migrar-extras[open] summary { margin-bottom: 8px; }
+
 .modal-caja {
   background: var(--color-panel);
   border-radius: 10px;

@@ -30,6 +30,7 @@ const CANALES = {
   GENERAR_ACTA: 'bandeja:generar-acta',
   GENERAR_ACTAS_LOTE: 'bandeja:generar-actas-lote',
   CONSULTAR_NPN: 'bandeja:consultar-npn',
+  MIGRAR_TRAMITE: 'bandeja:migrar-tramite',
 };
 
 /**
@@ -796,6 +797,68 @@ function registrarIpc(contenedor, obtenerVentana) {
       };
     } catch (error) {
       logger.error(`IPC consultar NPN: ${error.message}`);
+      return { ok: false, error: error.message };
+    }
+  });
+
+  /* ------------------------- migración de datos entre trámites ------------------------- */
+
+  ipcMain.handle(CANALES.MIGRAR_TRAMITE, async (_evento, opciones) => {
+    const { origen, destino, extras = {} } = opciones || {};
+    try {
+      if (!origen || !destino) {
+        return { ok: false, error: 'Se necesita un radicado origen y uno destino.' };
+      }
+
+      if (syncService.enEjecucion) {
+        return {
+          ok: false,
+          error: 'Hay una sincronización en curso. Espere a que termine e intente de nuevo.',
+        };
+      }
+      syncService.enEjecucion = true;
+
+      try {
+        notificar('migracion', {
+          mensaje: 'Abriendo edis para migrar datos...',
+          fase: 'inicio',
+        });
+
+        const page = await syncService.browserManager.abrirBandejaAutenticada({
+          interactivo: true,
+        });
+
+        const { migracionService } = contenedor;
+        const progreso = (mensaje) =>
+          notificar('migracion', { mensaje, fase: 'progreso' });
+
+        // 1. Leer datos del origen
+        progreso(`Leyendo datos del trámite ${origen}...`);
+        const datosOrigen = await migracionService.leerOrigen(page, origen, progreso);
+
+        // 2. Escribir datos en el destino
+        progreso(`Escribiendo datos en el trámite ${destino}...`);
+        await migracionService.escribirDestino(page, destino, datosOrigen, extras, progreso);
+
+        notificar('migracion', {
+          mensaje: `Datos migrados de ${origen} a ${destino}. Revise la pantalla y guarde.`,
+          fase: 'fin',
+        });
+
+        return {
+          ok: true,
+          mensaje: `Datos migrados de ${origen} a ${destino}. Revise la pantalla de edis y guarde los cambios manualmente.`,
+          camposLeidos: {
+            predio: Object.keys(datosOrigen.predio || {}).length,
+            propietarios: Object.keys(datosOrigen.propietarios || {}).length,
+            fuente: Object.keys(datosOrigen.fuente || {}).length,
+          },
+        };
+      } finally {
+        syncService.enEjecucion = false;
+      }
+    } catch (error) {
+      logger.error(`IPC migrar trámite: ${error.message}`);
       return { ok: false, error: error.message };
     }
   });

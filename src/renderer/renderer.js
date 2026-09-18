@@ -1263,6 +1263,67 @@ document.getElementById('lote-guardar').addEventListener('click', async () => {
   }
 });
 
+/* ------------------------- migrar datos entre trámites ------------------------- */
+
+const modalMigrar = document.getElementById('modal-migrar');
+const migrarEstado = document.getElementById('migrar-estado');
+
+document.getElementById('btn-migrar-menu').addEventListener('click', () => {
+  migrarEstado.textContent = '';
+  modalMigrar.classList.remove('oculto');
+});
+
+document.getElementById('migrar-cancelar').addEventListener('click', () => {
+  modalMigrar.classList.add('oculto');
+});
+
+document.getElementById('migrar-ejecutar').addEventListener('click', async () => {
+  const boton = document.getElementById('migrar-ejecutar');
+  const origen = document.getElementById('migrar-origen').value.trim();
+  const destino = document.getElementById('migrar-destino').value.trim();
+
+  if (!origen || !destino) {
+    migrarEstado.textContent = 'Escriba el radicado origen y el destino.';
+    return;
+  }
+  if (origen === destino) {
+    migrarEstado.textContent = 'El origen y el destino no pueden ser el mismo.';
+    return;
+  }
+
+  const extras = {
+    destino: document.getElementById('migrar-destino-eco').value.trim(),
+    matriculaCirculo: document.getElementById('migrar-mat-circulo').value.trim(),
+    matriculaNumero: document.getElementById('migrar-mat-numero').value.trim(),
+    tipoPredio: document.getElementById('migrar-tipo-predio').value.trim(),
+    direccion: document.getElementById('migrar-direccion').value.trim(),
+    tipoDireccion: document.getElementById('migrar-tipo-dir').value.trim(),
+    nombre: document.getElementById('migrar-nombre').value.trim(),
+    tipoDocumento: document.getElementById('migrar-tipo-doc').value.trim(),
+    documento: document.getElementById('migrar-documento').value.trim(),
+    porcentaje: document.getElementById('migrar-porcentaje').value.trim(),
+    tipoFuente: document.getElementById('migrar-tipo-fuente').value.trim(),
+    numeroFuente: document.getElementById('migrar-num-fuente').value.trim(),
+    fechaFuente: document.getElementById('migrar-fecha-fuente').value.trim(),
+    enteEmisor: document.getElementById('migrar-ente').value.trim(),
+    fechaInscripcion: document.getElementById('migrar-fecha-insc').value.trim(),
+  };
+
+  boton.disabled = true;
+  migrarEstado.textContent = 'Abriendo edis...';
+  try {
+    const r = await window.bandejaApi.migrarTramite({ origen, destino, extras });
+    if (!r.ok) {
+      migrarEstado.textContent = `Error: ${r.error}`;
+      return;
+    }
+    migrarEstado.textContent = r.mensaje;
+    mostrarEstado('exito', r.mensaje);
+  } finally {
+    boton.disabled = false;
+  }
+});
+
 /* ------------------------- mi perfil ------------------------- */
 
 const modalPerfil = document.getElementById('modal-perfil');
@@ -1462,7 +1523,10 @@ document.getElementById('btn-cerrar-sesion').addEventListener('click', () => {
 /* ------------------------- eventos del proceso principal ------------------------- */
 
 window.bandejaApi.onProgreso((datos) => {
-  if (datos.evento === 'npn-lote') {
+  if (datos.evento === 'migracion') {
+    if (migrarEstado) migrarEstado.textContent = datos.mensaje;
+    mostrarEstado('progreso', datos.mensaje);
+  } else if (datos.evento === 'npn-lote') {
     if (npnEstado) npnEstado.textContent = datos.mensaje;
     mostrarEstado('progreso', datos.mensaje);
   } else if (datos.evento === 'acta-lote') {

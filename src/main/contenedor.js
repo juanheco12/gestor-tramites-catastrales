@@ -12,6 +12,7 @@ const { BandejaSyncService } = require('../services/BandejaSyncService');
 const { ExportService } = require('../services/ExportService');
 const { BitacoraService } = require('../services/BitacoraService');
 const { ActaService } = require('../services/ActaService');
+const { MigracionTramiteService } = require('../services/MigracionTramiteService');
 
 /**
  * Contenedor de dependencias (composition root).
@@ -44,6 +45,7 @@ function crearContenedor() {
   const actaService = new ActaService(config, logger);
   const exportService = new ExportService(tramiteRepository, config, logger, gestionRepository);
   const importService = new ImportService(database, tramiteRepository, gestionRepository, config, logger);
+  const migracionService = new MigracionTramiteService(config, logger);
 
   return {
     bitacoraService,
@@ -58,6 +60,7 @@ function crearContenedor() {
     syncService,
     exportService,
     actaService,
+    migracionService,
   };
 }
 
