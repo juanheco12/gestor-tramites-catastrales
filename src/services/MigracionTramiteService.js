@@ -176,6 +176,16 @@ class MigracionTramiteService {
       `Formulario ubicado (${ubicados.estrategia}): ids=${(ubicados.ids || []).join(', ')}`
     );
 
+    // La página de resolución deshabilita los campos cuando ya tiene un
+    // trámite cargado. Se quitan disabled/readonly para poder escribir.
+    await page.evaluate(() => {
+      for (const campo of document.querySelectorAll('[data-robot-campo]')) {
+        campo.removeAttribute('disabled');
+        campo.removeAttribute('readonly');
+        if (campo.tagName === 'INPUT') campo.value = '';
+      }
+    });
+
     const campoAnio = page.locator('[data-robot-campo="anio"]');
     const campoNumero = page.locator('[data-robot-campo="numero"]');
     await campoAnio.waitFor({ state: 'visible', timeout: 5000 });
