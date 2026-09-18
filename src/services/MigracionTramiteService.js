@@ -2,81 +2,53 @@
 
 const fs = require('fs');
 const path = require('path');
+const { UBICAR_FORMULARIO } = require('./ConsultaTramiteService');
 
-const ESPERA_FICHA_MS = 12000;
-const ESPERA_TAB_MS = 5000;
-
-/**
- * Navega la página de resolución de edis, lee los datos de un trámite
- * (origen) y los escribe en otro (destino).
- *
- * Los campos que se migran son: Predio (destino económico, matrícula,
- * tipo de predio, dirección), Propietarios, Fuente Administrativa e
- * Inscripción Catastral. Terreno y Construcciones NO se tocan.
- */
 class MigracionTramiteService {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
   }
 
-  /**
-   * Lee los datos del trámite origen en edis.
-   *
-   * @param {import('playwright').Page} page Página autenticada en resolucion2ND
-   * @param {string} radicado  "2026-8712"
-   * @param {(msg: string) => void} onProgreso
-   * @returns {Promise<object>} Datos leídos por pestaña
-   */
   async leerOrigen(page, radicado, onProgreso = () => {}) {
-    onProgreso('Abriendo trámite origen en la bandeja...');
-    await this._abrirTramiteEnBandeja(page, radicado);
+    onProgreso('Abriendo trámite origen...');
+    await this._abrirTramite(page, radicado);
 
     onProgreso('Leyendo pestaña Predio...');
-    const predio = await this._leerPestana(page, 'Predio');
+    await this._irAPestana(page, 'Predio');
+    const predio = await this._leerCamposVisibles(page);
 
     onProgreso('Leyendo pestaña Propietarios...');
-    const propietarios = await this._leerPestana(page, 'Propietarios');
+    await this._irAPestana(page, 'Propietarios');
+    const propietarios = await this._leerCamposVisibles(page);
 
-    onProgreso('Leyendo pestaña Fuente Administrativa...');
-    const fuente = await this._leerPestana(page, 'Fte Administrativa');
+    onProgreso('Leyendo pestaña Fte Administrativa...');
+    await this._irAPestana(page, 'Fte Administrativa');
+    const fuente = await this._leerCamposVisibles(page);
 
     await this._guardarDiagnostico(page, `origen-${radicado}`);
+
+    this.logger.info(
+      `Origen ${radicado}: predio=${Object.keys(predio).length} campos, ` +
+      `propietarios=${Object.keys(propietarios).length}, fuente=${Object.keys(fuente).length}`
+    );
 
     return { predio, propietarios, fuente };
   }
 
-  /**
-   * Escribe los datos en el trámite destino.
-   *
-   * @param {import('playwright').Page} page
-   * @param {string} radicado "2026-8743"
-   * @param {object} datos  Lo que devolvió leerOrigen()
-   * @param {object} extras Datos adicionales que el usuario indicó aparte
-   * @param {(msg: string) => void} onProgreso
-   */
   async escribirDestino(page, radicado, datos, extras, onProgreso = () => {}) {
-    onProgreso('Volviendo a la bandeja...');
-    await page.goto(this.config.bandeja.url, {
-      waitUntil: 'domcontentloaded',
-      timeout: this.config.browser.timeoutMs,
-    });
+    onProgreso('Abriendo trámite destino...');
+    await this._abrirTramite(page, radicado);
 
-    onProgreso('Abriendo trámite destino en la bandeja...');
-    await this._abrirTramiteEnBandeja(page, radicado);
-
-    // Predio
     onProgreso('Llenando pestaña Predio...');
     await this._irAPestana(page, 'Predio');
     await this._llenarCamposPredio(page, datos.predio, extras);
 
-    // Propietarios
     onProgreso('Llenando pestaña Propietarios...');
     await this._irAPestana(page, 'Propietarios');
     await this._llenarCamposPropietarios(page, datos.propietarios, extras);
 
-    // Fuente Administrativa + Inscripción Catastral
-    onProgreso('Llenando pestaña Fuente Administrativa...');
+    onProgreso('Llenando pestaña Fte Administrativa...');
     await this._irAPestana(page, 'Fte Administrativa');
     await this._llenarCamposFuente(page, datos.fuente, extras);
 
@@ -84,390 +56,296 @@ class MigracionTramiteService {
     onProgreso('Datos migrados. Revise en pantalla y guarde manualmente.');
   }
 
-  /**
-   * Busca un radicado en la bandeja de la página de resolución y lo abre.
-   * El radicado aparece como enlace en la tabla; se hace clic en él.
-   */
-  async _abrirTramiteEnBandeja(page, radicado) {
+  async _abrirTramite(page, radicado) {
     const timeout = this.config.browser.timeoutMs;
+    const partes = this._partes(radicado);
 
-    // Primero asegurar que estamos en la página de resolución
-    const url = page.url();
-    if (!url.includes('resolucion')) {
-      await page.goto(this.config.bandeja.url, {
-        waitUntil: 'domcontentloaded',
-        timeout,
-      });
-    }
+    await page.goto(this.config.bandeja.url, {
+      waitUntil: 'domcontentloaded',
+      timeout,
+    });
 
-    // Abrir la bandeja (hacer clic en la lupa, igual que BandejaScraper)
-    const acciones = this.config.bandeja.accionesApertura || [];
-    for (const selector of acciones) {
-      try {
-        const el = page.locator(selector).first();
-        if (await el.isVisible({ timeout: 3000 }).catch(() => false)) {
-          await el.click({ timeout: 5000 });
-          await page.waitForLoadState('domcontentloaded', { timeout }).catch(() => {});
-          break;
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    // Buscar el enlace del radicado en la tabla y hacer clic
-    await page.waitForTimeout(2000);
-    const enlace = await this._buscarRadicadoEnTabla(page, radicado);
-    if (!enlace) {
+    const ubicados = await page.evaluate(UBICAR_FORMULARIO);
+    if (!ubicados.anio || !ubicados.numero || !ubicados.buscar) {
       throw new Error(
-        `No se encontró el radicado ${radicado} en la bandeja. ` +
-        'Asegúrese de que está asignado a usted y visible en la tabla.'
+        `No se ubicó el formulario de búsqueda ` +
+        `(año=${ubicados.anio}, número=${ubicados.numero}, lupa=${ubicados.buscar}). ` +
+        `Etiquetas: ${(ubicados.etiquetas || []).slice(0, 15).join(', ')}`
       );
     }
 
-    await enlace.click({ timeout: 5000 });
+    const campoAnio = page.locator('[data-robot-campo="anio"]');
+    const campoNumero = page.locator('[data-robot-campo="numero"]');
+    await campoAnio.fill(partes.anio);
+    await campoNumero.fill(partes.numero);
+
+    const puestos = {
+      anio: await campoAnio.inputValue(),
+      numero: await campoNumero.inputValue(),
+    };
+    if (puestos.anio !== partes.anio || puestos.numero !== partes.numero) {
+      throw new Error(
+        `Los datos no quedaron en su campo (AÑO="${puestos.anio}", NÚMERO="${puestos.numero}").`
+      );
+    }
+
+    await page.locator('[data-robot-campo="buscar"]').click({ timeout: 8000 });
     await page.waitForLoadState('domcontentloaded', { timeout }).catch(() => {});
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(2500);
+
+    this.logger.info(`Trámite ${radicado} abierto en resolución.`);
   }
 
-  async _buscarRadicadoEnTabla(page, radicado) {
-    // El radicado aparece como enlace o texto en la tabla de la bandeja.
-    // Probar varias estrategias.
-    const partes = radicado.match(/^(\d{2,4})-(\d+)$/);
-    const textos = [radicado];
-    if (partes) {
-      textos.push(partes[2]); // solo el número sin año
+  async _irAPestana(page, nombre) {
+    const tab = page.locator('a').filter({ hasText: nombre }).first();
+
+    if (!(await tab.isVisible({ timeout: 3000 }).catch(() => false))) {
+      const enlaces = await page.locator('a').allTextContents();
+      const tabs = enlaces.filter((t) => t.trim()).slice(0, 20);
+      this.logger.warn(`Pestaña "${nombre}" no visible. Enlaces: ${tabs.join(' | ')}`);
+      throw new Error(`No se encontró la pestaña "${nombre}" en la página.`);
     }
 
-    for (const texto of textos) {
-      // Enlace exacto
-      const enlace = page.locator(`a:text-is("${texto}")`).first();
-      if (await enlace.isVisible({ timeout: 1000 }).catch(() => false)) {
-        return enlace;
-      }
-      // Enlace que contiene
-      const enlace2 = page.locator(`a:has-text("${texto}")`).first();
-      if (await enlace2.isVisible({ timeout: 1000 }).catch(() => false)) {
-        return enlace2;
-      }
-    }
+    await tab.click({ timeout: 5000 });
+    await page.waitForLoadState('domcontentloaded', { timeout: 12000 }).catch(() => {});
+    await page.waitForTimeout(1500);
 
-    // Último recurso: buscar en cualquier celda de tabla
-    const celda = page.locator(`td:has-text("${radicado}")`).first();
-    if (await celda.isVisible({ timeout: 1000 }).catch(() => false)) {
-      const enlaceEnCelda = celda.locator('a').first();
-      if (await enlaceEnCelda.count()) return enlaceEnCelda;
-      return celda;
-    }
-
-    return null;
+    this.logger.info(`Pestaña "${nombre}" activa.`);
   }
 
-  /**
-   * Navega a una pestaña por su nombre dentro de la vista del trámite.
-   * edis usa tabs ASP.NET: busca un enlace/tab cuyo texto contenga el nombre.
-   */
-  async _irAPestana(page, nombrePestana) {
-    const tab = await page.evaluate((nombre) => {
-      const normalizar = (t) =>
-        (t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().trim();
-      const objetivo = normalizar(nombre);
-
-      // Buscar en enlaces de pestañas (tabs de ASP.NET o Bootstrap)
-      for (const el of document.querySelectorAll('a, .tab, [role="tab"], li')) {
-        const texto = normalizar(el.textContent);
-        if (texto.includes(objetivo)) {
-          el.click();
-          return { encontrada: true, texto: el.textContent.trim() };
-        }
-      }
-      // Buscar en inputs tipo button
-      for (const el of document.querySelectorAll('input[type="button"], input[type="submit"]')) {
-        const texto = normalizar(el.value);
-        if (texto.includes(objetivo)) {
-          el.click();
-          return { encontrada: true, texto: el.value.trim() };
-        }
-      }
-      return { encontrada: false };
-    }, nombrePestana);
-
-    if (!tab.encontrada) {
-      this.logger.warn(`No se encontró la pestaña "${nombrePestana}".`);
-    }
-
-    await page.waitForTimeout(ESPERA_TAB_MS);
-    await page.waitForLoadState('domcontentloaded', { timeout: 10000 }).catch(() => {});
-  }
-
-  /**
-   * Lee todos los campos visibles de la pestaña actual.
-   * Devuelve un mapa { etiqueta -> valor } leyendo las filas de tabla
-   * y los controles de formulario.
-   */
-  async _leerPestana(page, nombrePestana) {
-    await this._irAPestana(page, nombrePestana);
-
-    const campos = await page.evaluate(() => {
+  async _leerCamposVisibles(page) {
+    return page.evaluate(() => {
       const resultado = {};
       const normalizar = (t) =>
-        (t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
-          .replace(/\s+/g, ' ').trim().replace(/:$/, '');
+        (t || '')
+          .normalize('NFD')
+          .replace(/[̀-ͯ]/g, '')
+          .toUpperCase()
+          .replace(/\s+/g, ' ')
+          .trim()
+          .replace(/:$/, '');
 
-      // Leer dropdowns (select), inputs y textareas
-      for (const campo of document.querySelectorAll('select, input, textarea')) {
-        if (campo.type === 'hidden' || campo.type === 'submit' || campo.type === 'image') continue;
-        if (!campo.offsetParent) continue; // oculto
+      for (const fila of document.querySelectorAll('tr')) {
+        const celdas = Array.from(fila.querySelectorAll('td, th'));
+        if (celdas.length < 2) continue;
 
-        // Buscar la etiqueta más cercana
-        let etiqueta = '';
-        const label = campo.closest('label') || document.querySelector(`label[for="${campo.id}"]`);
-        if (label) {
-          etiqueta = normalizar(label.textContent.replace(campo.value || '', ''));
-        }
-        if (!etiqueta) {
-          const fila = campo.closest('tr');
-          if (fila) {
-            const celdas = fila.querySelectorAll('td, th');
-            if (celdas.length >= 2) {
-              etiqueta = normalizar(celdas[0].textContent);
+        const etiqueta = normalizar(celdas[0].innerText || celdas[0].textContent);
+        if (!etiqueta || etiqueta.length > 60) continue;
+        if (etiqueta in resultado) continue;
+
+        for (let j = 1; j < celdas.length; j++) {
+          const celda = celdas[j];
+          for (const campo of celda.querySelectorAll('select, input, textarea')) {
+            const tipo = (campo.getAttribute('type') || '').toLowerCase();
+            if (['hidden', 'submit', 'image', 'button'].includes(tipo)) continue;
+            if (!campo.offsetParent) continue;
+
+            let valor;
+            if (campo.tagName === 'SELECT') {
+              const op = campo.options[campo.selectedIndex];
+              valor = op ? op.text.trim() : '';
+            } else {
+              valor = (campo.value || '').trim();
+            }
+            if (valor && valor !== 'Label') {
+              resultado[etiqueta] = {
+                valor,
+                id: campo.id || '',
+                tipo: campo.tagName === 'SELECT' ? 'select' : 'text',
+              };
+            }
+            break;
+          }
+          if (resultado[etiqueta]) break;
+
+          for (const span of celda.querySelectorAll('span')) {
+            if (span.children.length > 0) continue;
+            const t = (span.textContent || '').trim();
+            if (t && t !== 'Label') {
+              resultado[etiqueta] = { valor: t, id: span.id || '', tipo: 'readonly' };
+              break;
             }
           }
+          if (resultado[etiqueta]) break;
         }
-        if (!etiqueta && campo.id) {
-          etiqueta = campo.id;
-        }
-        if (!etiqueta) continue;
-
-        let valor;
-        if (campo.tagName === 'SELECT') {
-          const opcion = campo.options[campo.selectedIndex];
-          valor = opcion ? opcion.text.trim() : '';
-        } else {
-          valor = (campo.value || '').trim();
-        }
-
-        resultado[etiqueta] = {
-          valor,
-          id: campo.id || '',
-          tipo: campo.tagName === 'SELECT' ? 'select' : campo.type || 'text',
-          name: campo.name || '',
-        };
       }
-
-      // Leer spans con borde (campos de solo lectura de edis)
-      for (const span of document.querySelectorAll('span.border, span[class*="border"]')) {
-        if (!span.offsetParent) continue;
-        const texto = (span.textContent || '').trim();
-        if (!texto || texto === 'Label') continue;
-        const fila = span.closest('tr');
-        if (!fila) continue;
-        const celdas = fila.querySelectorAll('td, th');
-        if (celdas.length < 1) continue;
-        let etiqueta = normalizar(celdas[0].textContent);
-        if (!etiqueta && span.id) etiqueta = span.id;
-        if (!etiqueta) continue;
-        resultado[etiqueta] = {
-          valor: texto,
-          id: span.id || '',
-          tipo: 'readonly',
-          name: '',
-        };
-      }
-
       return resultado;
     });
-
-    this.logger.info(
-      `Pestaña "${nombrePestana}": ${Object.keys(campos).length} campo(s) leídos ` +
-      `— ${Object.entries(campos).filter(([, v]) => v.valor).map(([k, v]) => `${k}=${String(v.valor).slice(0, 30)}`).slice(0, 10).join(', ')}`
-    );
-
-    return campos;
   }
 
-  /**
-   * Rellena los campos de la pestaña Predio en el destino.
-   */
-  async _llenarCamposPredio(page, datosOrigen, extras) {
-    await page.evaluate(({ datos, ext }) => {
-      const poner = (id, valor) => {
-        if (!id || !valor) return;
-        const el = document.getElementById(id);
-        if (!el) return;
-        if (el.tagName === 'SELECT') {
-          for (const op of el.options) {
-            if (op.text.toUpperCase().includes(valor.toUpperCase()) ||
-                op.value.toUpperCase().includes(valor.toUpperCase())) {
-              el.value = op.value;
-              el.dispatchEvent(new Event('change', { bubbles: true }));
-              return;
-            }
-          }
-        } else {
-          el.value = valor;
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-      };
+  async _marcarCampo(page, etiqueta, tag) {
+    await page
+      .evaluate((t) => {
+        const prev = document.querySelector(`[data-robot-campo="${t}"]`);
+        if (prev) prev.removeAttribute('data-robot-campo');
+      }, tag)
+      .catch(() => {});
 
-      const ponerPorEtiqueta = (etiqueta, valor) => {
-        if (!valor) return;
+    return page.evaluate(
+      ({ etiqueta, tag }) => {
         const normalizar = (t) =>
-          (t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
-            .replace(/\s+/g, ' ').trim();
+          (t || '')
+            .normalize('NFD')
+            .replace(/[̀-ͯ]/g, '')
+            .toUpperCase()
+            .replace(/\s+/g, ' ')
+            .trim()
+            .replace(/:$/, '');
         const objetivo = normalizar(etiqueta);
 
         for (const fila of document.querySelectorAll('tr')) {
-          const celdas = fila.querySelectorAll('td, th');
+          const celdas = Array.from(fila.querySelectorAll('td, th'));
           if (celdas.length < 2) continue;
-          const textoEtiqueta = normalizar(celdas[0].textContent);
+          const textoEtiqueta = normalizar(celdas[0].innerText || celdas[0].textContent);
           if (!textoEtiqueta.includes(objetivo)) continue;
 
-          for (const campo of celdas[1].querySelectorAll('select, input, textarea')) {
-            if (campo.type === 'hidden' || campo.type === 'submit' || campo.type === 'image') continue;
-            if (campo.tagName === 'SELECT') {
-              for (const op of campo.options) {
-                if (normalizar(op.text).includes(normalizar(valor)) ||
-                    normalizar(op.value).includes(normalizar(valor))) {
-                  campo.value = op.value;
-                  campo.dispatchEvent(new Event('change', { bubbles: true }));
-                  return;
-                }
+          for (let j = 1; j < celdas.length; j++) {
+            for (const campo of celdas[j].querySelectorAll('select, input, textarea')) {
+              const tipo = (campo.getAttribute('type') || '').toLowerCase();
+              if (['hidden', 'submit', 'image', 'button'].includes(tipo)) continue;
+              if (!campo.offsetParent) continue;
+
+              campo.setAttribute('data-robot-campo', tag);
+
+              if (campo.tagName === 'SELECT') {
+                const opciones = Array.from(campo.options).map((o) => ({
+                  value: o.value,
+                  text: o.text.trim(),
+                  textNorm: normalizar(o.text),
+                }));
+                return { encontrado: true, tipo: 'select', id: campo.id || '', opciones };
               }
-            } else {
-              campo.value = valor;
-              campo.dispatchEvent(new Event('change', { bubbles: true }));
-              campo.dispatchEvent(new Event('input', { bubbles: true }));
-              return;
+              return { encontrado: true, tipo: 'input', id: campo.id || '' };
             }
           }
         }
-      };
+        return { encontrado: false };
+      },
+      { etiqueta, tag }
+    );
+  }
 
-      // Buscar en los datos leídos del origen los campos por etiqueta
-      const buscar = (patron) => {
-        const norm = patron.toUpperCase();
-        for (const [k, v] of Object.entries(datos)) {
-          if (k.toUpperCase().includes(norm) && v.valor) return v.valor;
+  async _llenarInput(page, etiqueta, valor) {
+    if (!valor) return;
+    const tag = `migrar-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const info = await this._marcarCampo(page, etiqueta, tag);
+    if (!info.encontrado) {
+      this.logger.warn(`Campo "${etiqueta}" no encontrado en la página.`);
+      return;
+    }
+
+    const locator = page.locator(`[data-robot-campo="${tag}"]`);
+
+    if (info.tipo === 'select') {
+      const norm = (t) =>
+        (t || '')
+          .normalize('NFD')
+          .replace(/[̀-ͯ]/g, '')
+          .toUpperCase()
+          .replace(/[_\s]+/g, ' ')
+          .trim();
+      const objetivo = norm(valor);
+
+      let mejor = null;
+      for (const op of info.opciones) {
+        const textoOp = norm(op.text);
+        const valorOp = norm(op.value);
+        if (textoOp === objetivo || valorOp === objetivo) {
+          mejor = op;
+          break;
         }
-        return '';
-      };
+        if (!mejor && (textoOp.includes(objetivo) || objetivo.includes(textoOp))) {
+          mejor = op;
+        }
+        if (!mejor && (valorOp.includes(objetivo) || objetivo.includes(valorOp))) {
+          mejor = op;
+        }
+      }
 
-      // Destino económico
-      ponerPorEtiqueta('Destino', ext.destino || buscar('DESTINO'));
-      // Matrícula inmobiliaria
-      ponerPorEtiqueta('Matric', ext.matriculaCirculo || buscar('CIRCULO'));
-      ponerPorEtiqueta('Numero matric', ext.matriculaNumero || buscar('MATRICULA'));
-      // Tipo de predio
-      ponerPorEtiqueta('Tipo de Predio', ext.tipoPredio || buscar('TIPO DE PREDIO') || buscar('TIPO PREDIO'));
-      // Dirección
-      ponerPorEtiqueta('Direcc', ext.direccion || buscar('DIRECCION'));
-      ponerPorEtiqueta('Tipo Direcc', ext.tipoDireccion || buscar('TIPO DIREC'));
-    }, { datos: datosOrigen || {}, ext: extras || {} });
+      if (!mejor) {
+        this.logger.warn(
+          `No se encontró opción "${valor}" en "${etiqueta}". ` +
+          `Opciones: ${info.opciones.map((o) => o.text).join(', ')}`
+        );
+        return;
+      }
+
+      await locator.selectOption(mejor.value);
+      this.logger.info(`Select "${etiqueta}" = "${mejor.text}"`);
+    } else {
+      await locator.fill(String(valor));
+      this.logger.info(`Input "${etiqueta}" = "${valor}"`);
+    }
+  }
+
+  async _llenarCamposPredio(page, datosOrigen, extras) {
+    const buscar = this._crearBuscador(datosOrigen);
+
+    await this._llenarInput(page, 'Destino', extras.destino || buscar('DESTINO'));
+    await this._llenarInput(page, 'Circulo', extras.matriculaCirculo || buscar('CIRCULO'));
+    await this._llenarInput(page, 'Matricula', extras.matriculaNumero || buscar('MATRICULA'));
+    await this._llenarInput(
+      page,
+      'Tipo de Predio',
+      extras.tipoPredio || buscar('TIPO PREDIO', 'TIPO DE PREDIO')
+    );
+    await this._llenarInput(page, 'Direcc', extras.direccion || buscar('DIRECCION', 'DIRECC'));
+    await this._llenarInput(
+      page,
+      'Tipo Direcc',
+      extras.tipoDireccion || buscar('TIPO DIRECC', 'TIPO DIR')
+    );
   }
 
   async _llenarCamposPropietarios(page, datosOrigen, extras) {
-    await page.evaluate(({ datos, ext }) => {
-      const ponerPorEtiqueta = (etiqueta, valor) => {
-        if (!valor) return;
-        const normalizar = (t) =>
-          (t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
-            .replace(/\s+/g, ' ').trim();
-        const objetivo = normalizar(etiqueta);
+    const buscar = this._crearBuscador(datosOrigen);
 
-        for (const fila of document.querySelectorAll('tr')) {
-          const celdas = fila.querySelectorAll('td, th');
-          if (celdas.length < 2) continue;
-          if (!normalizar(celdas[0].textContent).includes(objetivo)) continue;
-
-          for (const campo of celdas[1].querySelectorAll('select, input, textarea')) {
-            if (campo.type === 'hidden' || campo.type === 'submit' || campo.type === 'image') continue;
-            if (campo.tagName === 'SELECT') {
-              for (const op of campo.options) {
-                if (normalizar(op.text).includes(normalizar(valor)) ||
-                    normalizar(op.value).includes(normalizar(valor))) {
-                  campo.value = op.value;
-                  campo.dispatchEvent(new Event('change', { bubbles: true }));
-                  return;
-                }
-              }
-            } else {
-              campo.value = valor;
-              campo.dispatchEvent(new Event('change', { bubbles: true }));
-              campo.dispatchEvent(new Event('input', { bubbles: true }));
-              return;
-            }
-          }
-        }
-      };
-
-      const buscar = (patron) => {
-        const norm = patron.toUpperCase();
-        for (const [k, v] of Object.entries(datos)) {
-          if (k.toUpperCase().includes(norm) && v.valor) return v.valor;
-        }
-        return '';
-      };
-
-      ponerPorEtiqueta('Nombre', ext.nombre || buscar('NOMBRE'));
-      ponerPorEtiqueta('Tipo Documento', ext.tipoDocumento || buscar('TIPO DOCUMENTO') || buscar('TIPO DOC'));
-      ponerPorEtiqueta('Documento', ext.documento || buscar('DOCUMENTO') || buscar('CEDULA'));
-      ponerPorEtiqueta('Porcentaje', ext.porcentaje || buscar('PORCENTAJE'));
-    }, { datos: datosOrigen || {}, ext: extras || {} });
+    await this._llenarInput(page, 'Nombre', extras.nombre || buscar('NOMBRE'));
+    await this._llenarInput(
+      page,
+      'Tipo Documento',
+      extras.tipoDocumento || buscar('TIPO DOCUMENTO', 'TIPO DOC')
+    );
+    await this._llenarInput(page, 'Documento', extras.documento || buscar('DOCUMENTO', 'CEDULA'));
+    await this._llenarInput(page, 'Porcentaje', extras.porcentaje || buscar('PORCENTAJE'));
   }
 
   async _llenarCamposFuente(page, datosOrigen, extras) {
-    await page.evaluate(({ datos, ext }) => {
-      const ponerPorEtiqueta = (etiqueta, valor) => {
-        if (!valor) return;
-        const normalizar = (t) =>
-          (t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
-            .replace(/\s+/g, ' ').trim();
-        const objetivo = normalizar(etiqueta);
+    const buscar = this._crearBuscador(datosOrigen);
 
-        for (const fila of document.querySelectorAll('tr')) {
-          const celdas = fila.querySelectorAll('td, th');
-          if (celdas.length < 2) continue;
-          if (!normalizar(celdas[0].textContent).includes(objetivo)) continue;
+    await this._llenarInput(page, 'Tipo', extras.tipoFuente || buscar('TIPO'));
+    await this._llenarInput(page, 'Numero', extras.numeroFuente || buscar('NUMERO'));
+    await this._llenarInput(page, 'Fecha', extras.fechaFuente || buscar('FECHA'));
+    await this._llenarInput(page, 'Ente Emisor', extras.enteEmisor || buscar('ENTE EMISOR', 'ENTE'));
+    await this._llenarInput(
+      page,
+      'Fecha Inscripci',
+      extras.fechaInscripcion || buscar('INSCRIPCION')
+    );
+  }
 
-          for (const campo of celdas[1].querySelectorAll('select, input, textarea')) {
-            if (campo.type === 'hidden' || campo.type === 'submit' || campo.type === 'image') continue;
-            if (campo.tagName === 'SELECT') {
-              for (const op of campo.options) {
-                if (normalizar(op.text).includes(normalizar(valor)) ||
-                    normalizar(op.value).includes(normalizar(valor))) {
-                  campo.value = op.value;
-                  campo.dispatchEvent(new Event('change', { bubbles: true }));
-                  return;
-                }
-              }
-            } else {
-              campo.value = valor;
-              campo.dispatchEvent(new Event('change', { bubbles: true }));
-              campo.dispatchEvent(new Event('input', { bubbles: true }));
-              return;
-            }
-          }
-        }
-      };
-
-      const buscar = (patron) => {
+  _crearBuscador(datos) {
+    return (...patrones) => {
+      if (!datos) return '';
+      for (const patron of patrones) {
         const norm = patron.toUpperCase();
         for (const [k, v] of Object.entries(datos)) {
           if (k.toUpperCase().includes(norm) && v.valor) return v.valor;
         }
-        return '';
-      };
+      }
+      return '';
+    };
+  }
 
-      // Fuente Administrativa
-      ponerPorEtiqueta('Tipo Fuente', ext.tipoFuente || buscar('TIPO FUENTE') || buscar('TIPO FTE'));
-      ponerPorEtiqueta('Numero', ext.numeroFuente || buscar('NUMERO'));
-      ponerPorEtiqueta('Fecha', ext.fechaFuente || buscar('FECHA'));
-      ponerPorEtiqueta('Ente Emisor', ext.enteEmisor || buscar('ENTE EMISOR') || buscar('ENTE'));
-      // Inscripción Catastral
-      ponerPorEtiqueta('Fecha Inscripci', ext.fechaInscripcion || buscar('INSCRIPCION'));
-    }, { datos: datosOrigen || {}, ext: extras || {} });
+  _partes(radicado) {
+    if (radicado && typeof radicado === 'object') {
+      return { anio: String(radicado.anio), numero: String(radicado.numero) };
+    }
+    const m = String(radicado || '').match(/^(\d{2,4})-(\d+)/);
+    if (!m) throw new Error(`Formato de radicado inválido: "${radicado}". Use AAAA-NNNN.`);
+    const crudo = m[1];
+    const anio = crudo.length <= 2 ? `20${crudo}` : crudo;
+    return { anio, numero: m[2] };
   }
 
   async _guardarDiagnostico(page, nombre) {
@@ -480,7 +358,7 @@ class MigracionTramiteService {
       this.logger.info(`Diagnóstico migración guardado: ${base}`);
       return `${base}.png`;
     } catch (error) {
-      this.logger.warn(`No se pudo guardar diagnóstico de migración: ${error.message}`);
+      this.logger.warn(`No se pudo guardar diagnóstico: ${error.message}`);
       return '';
     }
   }
