@@ -71,6 +71,88 @@ function UBICAR_BUSQUEDA() {
   return { anio: false, numero: false, buscar: false, estrategia: 'ninguna' };
 }
 
+/**
+ * Encuentra y MARCA la pestaña cuyo rótulo coincide con `nombre` dentro del
+ * documento actual (se ejecuta con page.evaluate en cada marco).  Devuelve si
+ * se encontró y, si no, la lista de enlaces visibles para diagnóstico.
+ *
+ * Prioriza coincidencia EXACTA del texto propio (el <a>Predio</a> gana sobre
+ * la barra que contiene todos los rótulos juntos) y, en su defecto, una
+ * coincidencia por inclusión con un rótulo corto (para "Fte Administrativa"
+ * dentro de "Fte Administrativa y Decretos").
+ */
+function MARCAR_PESTANA({ nombre }) {
+  const norm = (t) =>
+    (t || '')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toUpperCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+  const objetivo = norm(nombre);
+
+  document
+    .querySelectorAll('[data-robot-pestana]')
+    .forEach((el) => el.removeAttribute('data-robot-pestana'));
+
+  const esVisible = (el) => el.offsetParent !== null || el.getClientRects().length > 0;
+
+  const candidatos = Array.from(
+    document.querySelectorAll(
+      'a, input[type="submit"], input[type="button"], span, td, div, li, b, font, label'
+    )
+  );
+
+  let exacto = null;
+  let contiene = null;
+  for (const el of candidatos) {
+    if (!esVisible(el)) continue;
+
+    const textoPropio = norm(
+      Array.from(el.childNodes)
+        .filter((n) => n.nodeType === 3)
+        .map((n) => n.textContent)
+        .join(' ')
+    );
+    const textoCompleto =
+      el.tagName === 'INPUT' ? norm(el.value) : norm(el.textContent);
+
+    if (textoPropio === objetivo || textoCompleto === objetivo) {
+      exacto = el;
+      break;
+    }
+    if (
+      !contiene &&
+      textoCompleto.includes(objetivo) &&
+      textoCompleto.length <= objetivo.length + 25
+    ) {
+      contiene = el;
+    }
+  }
+
+  const elegido = exacto || contiene;
+  if (elegido) {
+    const enlace = elegido.closest('a') || elegido;
+    enlace.setAttribute('data-robot-pestana', '1');
+    return {
+      encontrado: true,
+      tag: enlace.tagName,
+      href: enlace.getAttribute('href') || '',
+      texto: norm(enlace.textContent || enlace.value).slice(0, 40),
+    };
+  }
+
+  const enlaces = [
+    ...new Set(
+      Array.from(document.querySelectorAll('a'))
+        .filter((a) => esVisible(a))
+        .map((a) => norm(a.textContent))
+        .filter(Boolean)
+    ),
+  ].slice(0, 40);
+  return { encontrado: false, enlaces };
+}
+
 class MigracionTramiteService {
   constructor(config, logger) {
     this.config = config;
@@ -209,48 +291,48 @@ class MigracionTramiteService {
   }
 
   async _irAPestana(page, nombre) {
-    // Estrategia 1: enlaces <a> (ASP.NET LinkButton)
-    let tab = page.locator('a').filter({ hasText: nombre }).first();
-    if (await tab.isVisible({ timeout: 10000 }).catch(() => false)) {
-      await tab.click({ timeout: 5000 });
-      await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
-      await page.waitForTimeout(2000);
-      this.logger.info(`Pestaña "${nombre}" activa.`);
-      return;
-    }
-
-    // Estrategia 2: cualquier elemento con texto exacto (span, div, td, etc.)
-    tab = page.getByText(nombre, { exact: true }).first();
-    if (await tab.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await tab.click({ timeout: 5000 });
-      await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
-      await page.waitForTimeout(2000);
-      this.logger.info(`Pestaña "${nombre}" activa (texto exacto).`);
-      return;
-    }
-
-    // Estrategia 3: buscar dentro de frames/iframes
+    // Se busca y MARCA la pestaña con JS dentro de la página (patrón probado en
+    // el resto del código), en TODOS los marcos, y luego se hace clic con
+    // Playwright sobre el elemento marcado. Es mucho más robusto que un
+    // locator de texto: encuentra el enlace aunque el rótulo esté dentro de un
+    // <span>, tolera acentos/espacios y funciona con los LinkButton de ASP.NET
+    // (href="javascript:__doPostBack(...)").
     for (const frame of page.frames()) {
-      if (frame === page.mainFrame()) continue;
-      const tabFrame = frame.locator('a').filter({ hasText: nombre }).first();
-      if (await tabFrame.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await tabFrame.click({ timeout: 5000 });
-        await page.waitForTimeout(3000);
-        this.logger.info(`Pestaña "${nombre}" activa (en frame).`);
-        return;
-      }
+      const info = await frame
+        .evaluate(MARCAR_PESTANA, { nombre })
+        .catch(() => ({ encontrado: false }));
+      if (!info.encontrado) continue;
+
+      const tab = frame.locator('[data-robot-pestana="1"]');
+      await tab.click({ timeout: 8000 }).catch(async () => {
+        // Respaldo: disparar el postback directamente si el click no navega.
+        await frame.evaluate(() => {
+          const el = document.querySelector('[data-robot-pestana="1"]');
+          if (el) el.click();
+        });
+      });
+      await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
+      await page.waitForTimeout(2000);
+      this.logger.info(
+        `Pestaña "${nombre}" activa (${info.tag}, texto="${info.texto}", href="${info.href}").`
+      );
+      return;
     }
 
-    const enlaces = await page.locator('a').allTextContents().catch(() => []);
+    // No se encontró en ningún marco: guardar diagnóstico y reportar qué había.
+    const diag = await page.evaluate(MARCAR_PESTANA, { nombre }).catch(() => ({ enlaces: [] }));
     const frames = page.frames().map((f) => f.url());
     this.logger.warn(
-      `Pestaña "${nombre}" no visible.\n` +
-        `  Enlaces: ${enlaces.filter((t) => t.trim()).slice(0, 30).join(' | ')}\n` +
-        `  Frames: ${frames.join(', ')}\n` +
-        `  URL: ${page.url()}`
+      `Pestaña "${nombre}" no encontrada.\n` +
+        `  URL: ${page.url()}\n` +
+        `  Enlaces en página: ${(diag.enlaces || []).join(' | ')}\n` +
+        `  Marcos: ${frames.join(', ')}`
     );
     await this._guardarDiagnostico(page, `pestana-no-encontrada-${nombre}`);
-    throw new Error(`No se encontró la pestaña "${nombre}".`);
+    throw new Error(
+      `No se encontró la pestaña "${nombre}". ` +
+        `Enlaces vistos: ${(diag.enlaces || []).slice(0, 15).join(', ') || '(ninguno)'}.`
+    );
   }
 
   async _clickBotonAccion(page, texto) {
