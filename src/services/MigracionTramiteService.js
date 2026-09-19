@@ -201,26 +201,25 @@ class MigracionTramiteService {
     onProgreso('Guardando Predio...');
     await this._clickBotonAccion(page, 'Guardar');
 
-    /* Dirección del predio */
-    const direccion = extras.direccion || this._buscarEn(datos.predio, 'DIRECCION', 'DIRECC');
-    if (direccion) {
-      onProgreso('Agregando dirección del predio...');
-      await this._clickPorIdSufijo(page, '_BtnAgregaDir');
-      await this._llenarDireccion(page, direccion);
-      await this._clickBotonAccion(page, 'Guardar');
-    }
+    // Un modal abierto tapa la página entera: se cierra antes de seguir.
+    await this._cerrarModalAbierto(page);
 
     /* --- Propietarios --- */
     onProgreso('Navegando a pestaña Propietarios...');
     await this._irAPestana(page, 'Propietarios');
     onProgreso('Agregando nuevo propietario...');
-    if (!(await this._clickPorIdSufijo(page, '_BtnAgregaProp'))) {
-      await this._clickBotonAgregar(page);
+    if (await this._clickPorIdSufijo(page, '_BtnAgregaProp')) {
+      onProgreso('Llenando campos de Propietario...');
+      await this._llenarCamposPropietarios(page, datos.propietarios, extras);
+      onProgreso('Guardando Propietario...');
+      if (!(await this._clickPorIdSufijo(page, '_BtnGuardaProp'))) {
+        await this._clickBotonAccion(page, 'Guardar');
+      }
+      await this._cerrarAviso(page);
+      await this._cerrarModalAbierto(page);
+    } else {
+      this.logger.warn('No se pudo abrir el formulario de Propietario (+).');
     }
-    onProgreso('Llenando campos de Propietario...');
-    await this._llenarCamposPropietarios(page, datos.propietarios, extras);
-    onProgreso('Guardando Propietario...');
-    await this._clickBotonAccion(page, 'Guardar');
 
     /* --- Fte Administrativa (datos SIEMPRE de los predeterminados/extras) --- */
     onProgreso('Navegando a pestaña Fte Administrativa...');
@@ -233,7 +232,11 @@ class MigracionTramiteService {
     onProgreso('Llenando campos de Fuente Administrativa...');
     await this._llenarCamposFuente(page, datos.fuente, extras);
     onProgreso('Guardando Fuente Administrativa...');
-    await this._clickBotonAccion(page, 'Guardar');
+    if (!(await this._clickPorIdSufijo(page, '_BtnGuardaEscritura'))) {
+      await this._clickBotonAccion(page, 'Guardar');
+    }
+    await this._cerrarAviso(page);
+    await this._cerrarModalAbierto(page);
 
     await this._guardarDiagnostico(page, `destino-${radicado}`);
     onProgreso('Migración completada. Revise en pantalla.');
@@ -553,23 +556,52 @@ class MigracionTramiteService {
     return false;
   }
 
-  async _clickBotonAgregar(page) {
-    const botones = page.locator(
-      'input[type="image"]:not([data-robot-campo="buscar"])'
-    );
-    const count = await botones.count();
-    for (let i = 0; i < count; i++) {
-      const btn = botones.nth(i);
-      if (await btn.isVisible().catch(() => false)) {
-        await btn.click({ timeout: 5000 });
-        await page.waitForLoadState('domcontentloaded', { timeout: 10000 }).catch(() => {});
-        await page.waitForTimeout(1500);
-        this.logger.info('Botón "+" (agregar) pulsado.');
+  /**
+   * Cierra cualquier modal PanelPop* que haya quedado abierto.  Son overlays a
+   * pantalla completa (bg-black bg-opacity-75): si uno queda abierto, TODOS los
+   * clics posteriores chocan contra él.  Se pulsa su botón "Salir".
+   * @returns {Promise<string>} id del modal cerrado, o '' si no había ninguno
+   */
+  async _cerrarModalAbierto(page) {
+    const abierto = await page
+      .evaluate(() => {
+        for (const el of document.querySelectorAll(
+          '[id^="ctl00_ContentPlaceHolder1_PanelPop"]'
+        )) {
+          const est = getComputedStyle(el);
+          if (est.display !== 'none' && est.visibility !== 'hidden') return el.id;
+        }
+        return '';
+      })
+      .catch(() => '');
+    if (!abierto) return '';
+
+    const marcado = await page
+      .evaluate((id) => {
+        document
+          .querySelectorAll('[data-robot-cerrar]')
+          .forEach((e) => e.removeAttribute('data-robot-cerrar'));
+        const modal = document.getElementById(id);
+        if (!modal) return false;
+        const salir = Array.from(
+          modal.querySelectorAll('input[type="submit"], input[type="button"], button, a')
+        ).find((b) => /salir|cerrar|cancelar/i.test(b.value || b.textContent || ''));
+        if (!salir) return false;
+        salir.setAttribute('data-robot-cerrar', '1');
         return true;
-      }
+      }, abierto)
+      .catch(() => false);
+
+    if (marcado) {
+      await page
+        .locator('[data-robot-cerrar="1"]')
+        .click({ timeout: 5000 })
+        .catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+      await page.waitForTimeout(800);
     }
-    this.logger.warn('Botón "+" no encontrado.');
-    return false;
+    this.logger.warn(`Modal ${abierto} quedó abierto; se cerró antes de seguir.`);
+    return abierto;
   }
 
   /* ===================== LECTURA ===================== */
@@ -889,66 +921,85 @@ class MigracionTramiteService {
     );
   }
 
+  /** Campos del modal PROPIETARIO (PanelPopPropietario), por id real. */
   async _llenarCamposPropietarios(page, datosOrigen, extras) {
     const buscar = this._crearBuscador(datosOrigen);
 
     await this._llenarInput(
       page,
       'Tipo Dcto',
-      extras.tipoDocumento || buscar('TIPO DOC', 'TIPO DCTO')
+      extras.tipoDocumento || buscar('TIPO DOC', 'TIPO DCTO'),
+      { idSufijo: '_CmbTipoDoc' }
     );
-    await this._llenarInput(page, 'Documento', extras.documento || buscar('DOCUMENTO'));
-    await this._llenarInput(page, 'Tipo Derecho', extras.tipoDerecho || 'Dominio');
     await this._llenarInput(
       page,
-      'Fraccion',
-      extras.porcentaje || buscar('PORCENTAJE', 'FRACCION') || '1'
+      'Documento',
+      extras.documento || buscar('DOCUMENTO', 'CEDULA'),
+      { idSufijo: '_TDcto' }
     );
-    await this._llenarInput(page, 'Autoreconocimiento Etnico', 'Ninguno');
+    await this._llenarInput(page, 'Tipo Derecho', extras.tipoDerecho || 'Dominio', {
+      idSufijo: '_CmbTipoDerecho',
+    });
+    await this._llenarInput(
+      page,
+      'Fraccion de Derecho',
+      extras.porcentaje || buscar('PORCENTAJE', 'FRACCION') || '1',
+      { idSufijo: '_TPorcProp' }
+    );
+
+    // La fecha de inicio de tenencia es la de la escritura salvo que se indique.
+    const fechaTenencia = extras.fechaTenencia || extras.fechaFuente || '';
+    if (fechaTenencia) {
+      await this._llenarInput(page, 'Fecha inicio tenencia', fechaTenencia, {
+        idSufijo: '_TFechaTenencia',
+      });
+    }
+
+    await this._llenarInput(page, 'Autoreconocimiento Etnico', extras.etnico || 'Ninguno', {
+      idSufijo: '_CmbGrupoEtnico',
+    });
 
     const nombreCompleto = extras.nombre || buscar('NOMBRE');
     if (nombreCompleto) {
       const n = this._separarNombre(nombreCompleto);
-      await this._llenarInput(page, '1er Nombre', n.primerNombre);
-      await this._llenarInput(page, '2do Nombre', n.segundoNombre);
-      await this._llenarInput(page, '1er Apellido', n.primerApellido);
-      await this._llenarInput(page, '2do Apellido', n.segundoApellido);
+      await this._llenarInput(page, '1er Nombre', n.primerNombre, { idSufijo: '_TNombre1' });
+      await this._llenarInput(page, '2do Nombre', n.segundoNombre, { idSufijo: '_TNombre2' });
+      await this._llenarInput(page, '1er Apellido', n.primerApellido, {
+        idSufijo: '_TApellido1',
+      });
+      await this._llenarInput(page, '2do Apellido', n.segundoApellido, {
+        idSufijo: '_TApellido2',
+      });
     }
 
-    await this._llenarInput(page, 'Sexo', extras.sexo || 'Masculino');
+    await this._llenarInput(page, 'Sexo', extras.sexo || 'Masculino', { idSufijo: '_CmbSexo' });
   }
 
+  /** Campos del modal ESCRITURA / fuente administrativa (PanelPopEscritura). */
   async _llenarCamposFuente(page, datosOrigen, extras) {
     const buscar = this._crearBuscador(datosOrigen);
 
-    await this._llenarInput(page, 'Tipo Fuente', extras.tipoFuente || buscar('TIPO'));
-    await this._llenarInput(page, 'Numero', extras.numeroFuente || buscar('NUMERO'));
-    await this._llenarInput(page, 'Fecha', extras.fechaFuente || buscar('FECHA'));
+    await this._llenarInput(page, 'Tipo Fuente', extras.tipoFuente || 'Escritura', {
+      idSufijo: '_CmbTipoFuente',
+    });
+    await this._llenarInput(page, 'Numero', extras.numeroFuente || buscar('NUMERO'), {
+      idSufijo: '_TEscrituraM',
+    });
+    await this._llenarInput(page, 'Fecha', extras.fechaFuente || buscar('FECHA'), {
+      idSufijo: '_TFechaEscrituraM',
+    });
     await this._llenarInput(
       page,
       'Ente Emisor',
-      extras.enteEmisor || buscar('ENTE EMISOR', 'ENTE')
+      extras.enteEmisor || buscar('ENTE EMISOR', 'ENTE', 'NOTARIA'),
+      { idSufijo: '_TNotariaM' }
     );
     await this._llenarInput(
       page,
-      'Fecha Inscripci',
-      extras.fechaInscripcion || buscar('INSCRIPCION')
+      'Fecha Inscripcion Catastral',
+      extras.fechaInscripcion || buscar('INSCRIPCION'),
+      { idSufijo: '_TFechaICM' }
     );
-  }
-
-  async _llenarDireccion(page, direccion) {
-    await this._llenarInput(page, 'Complemento', direccion);
-    if (!(await this._tieneValor(page, 'Complemento'))) {
-      await this._llenarInput(page, 'Nombre Predio', direccion);
-    }
-  }
-
-  async _tieneValor(page, etiqueta) {
-    const tag = `check-${Date.now()}`;
-    const info = await this._marcarCampo(page, etiqueta, tag);
-    if (!info.encontrado) return false;
-    const val = await page.locator(`[data-robot-campo="${tag}"]`).inputValue().catch(() => '');
-    return Boolean(val);
   }
 
   /* ===================== UTILIDADES ===================== */
