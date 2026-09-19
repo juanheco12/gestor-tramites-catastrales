@@ -369,6 +369,14 @@ class MigracionTramiteService {
       await this._llenarInput(page, 'Area Terreno Privado', areaTerreno, {
         idSufijo: '_TAreaTTPrivada',
       });
+      // Sacar el foco del campo para que el valor quede confirmado antes de
+      // enviar el formulario.
+      await page
+        .locator('[id$="_TAreaTTPrivada"]')
+        .first()
+        .press('Tab', { timeout: 5000 })
+        .catch(() => {});
+      await page.waitForTimeout(500);
       onProgreso('Aplicando zonas digitales...');
       await this._aplicarZonasDigitales(page);
     } else {
@@ -681,30 +689,74 @@ class MigracionTramiteService {
     const antes = await this._leerPorIds(page, { area: '_TAreaTTPrivada' });
     this.logger.info(`Área de terreno antes de aplicar zonas: "${antes.area}"`);
 
-    if (!(await this._clickPorIdSufijo(page, '_BtnGetZonasD', { timeout: 15000 }))) {
+    const boton = page.locator('[id$="_BtnGetZonasD"]').first();
+    if (!(await boton.isVisible({ timeout: 8000 }).catch(() => false))) {
       this.logger.warn('No se encontró el botón "Aplica Zonas Digitales".');
       return false;
     }
+
+    // Es un <input type="submit">: el clic provoca una navegación completa que
+    // tarda. Se espera la navegación en sí (no networkidle, que resolvía a los
+    // 0,2 s dejando el envío a medias).
+    const inicio = Date.now();
+    await Promise.all([
+      page
+        .waitForNavigation({ waitUntil: 'load', timeout: 120000 })
+        .catch(() => null),
+      boton.click({ timeout: 15000 }).catch((e) => {
+        this.logger.warn(`No se pudo pulsar zonas digitales: ${e.message.split('\n')[0]}`);
+      }),
+    ]);
+    this.logger.info(`Zonas digitales: respuesta en ${Date.now() - inicio} ms.`);
     await this._cerrarAviso(page);
 
-    const limite = Date.now() + 20000;
-    while (Date.now() < limite) {
-      const total = await page
-        .evaluate(() => {
-          const el = document.querySelector('[id$="_LblAreaTotalTerreno"]');
-          return el ? (el.textContent || '').trim() : '';
-        })
-        .catch(() => '');
-      if (total && parseFloat(String(total).replace(',', '.')) > 0) {
-        this.logger.info(`Zonas digitales aplicadas (suma de áreas ${total}).`);
-        return true;
-      }
-      await page.waitForTimeout(1000);
-    }
-    this.logger.warn(
-      'No se pudo confirmar la suma de áreas tras aplicar zonas; se continúa.'
+    // Tras el postback la pestaña activa puede volver al inicio.
+    await this._irAPestana(page, 'Terreno').catch(() => {});
+
+    const estado = await this._leerEstadoTerreno(page);
+    await this._guardarDiagnostico(page, 'zonas-digitales');
+    this.logger.info(
+      `Terreno tras aplicar zonas: area="${estado.area}" total="${estado.total}" ` +
+        `filasZonas=${estado.filasZonas} mensaje="${estado.mensaje}"`
     );
+
+    if (estado.filasZonas > 0 || parseFloat(String(estado.total).replace(',', '.')) > 0) {
+      this.logger.info('Zonas digitales aplicadas.');
+      return true;
+    }
+    this.logger.warn('Las zonas no quedaron aplicadas; ver diagnostico/zonas-digitales.');
     return false;
+  }
+
+  /** Estado de la pestaña Terreno: área, suma, filas de zonas y avisos. */
+  async _leerEstadoTerreno(page) {
+    return page
+      .evaluate(() => {
+        const val = (s) => {
+          const el = document.querySelector(`[id$="${s}"]`);
+          if (!el) return '';
+          return (el.value !== undefined ? el.value : el.textContent || '').trim();
+        };
+        // Filas con datos de la grilla de ZONAS (encabezado IdCIZona).
+        let filasZonas = 0;
+        for (const tabla of document.querySelectorAll('table')) {
+          const filas = Array.from(tabla.querySelectorAll('tr'));
+          if (filas.length < 2) continue;
+          const cab = (filas[0].textContent || '').toUpperCase();
+          if (!cab.includes('IDCIZONA')) continue;
+          filasZonas = filas.slice(1).filter((f) => (f.textContent || '').trim()).length;
+          break;
+        }
+        const texto = (document.body.innerText || '').replace(/\s+/g, ' ');
+        const m = texto.match(/[^.]*(ZONA[^.]{0,80}|no se encontr[^.]{0,80})/i);
+        return {
+          area: val('_TAreaTTPrivada'),
+          total: val('_LblAreaTotalTerreno'),
+          filasZonas,
+          mensaje: m ? m[0].trim().slice(0, 150) : '',
+        };
+      })
+      .catch(() => ({ area: '', total: '', filasZonas: 0, mensaje: '' }));
   }
 
   /**
