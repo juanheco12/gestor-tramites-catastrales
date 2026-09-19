@@ -247,10 +247,10 @@ class MigracionTramiteService {
     });
 
     const ubicados = await page.evaluate(UBICAR_BUSQUEDA);
-    if (!ubicados.anio || !ubicados.numero || !ubicados.buscar) {
+    if (!ubicados.anio || !ubicados.numero) {
       throw new Error(
         `No se ubicó el formulario de Radicación ` +
-          `(año=${ubicados.anio}, número=${ubicados.numero}, lupa=${ubicados.buscar}, ` +
+          `(año=${ubicados.anio}, número=${ubicados.numero}, ` +
           `estrategia=${ubicados.estrategia}).`
       );
     }
@@ -282,12 +282,156 @@ class MigracionTramiteService {
       );
     }
 
-    await page.locator('[data-robot-campo="buscar"]').click({ timeout: 8000 });
+    // Pulsar el botón de búsqueda de radicado (ID conocido y respaldos).
+    await this._clickBuscarRadicado(page);
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(3000);
+    await this._cerrarAviso(page);
+
+    // La búsqueda puede: (a) cargar el trámite directo -> aparecen pestañas; o
+    // (b) mostrar una CUADRÍCULA de trámites donde hay que clicar el radicado
+    // para abrir su formulario (el BandejaScraper trabaja igual sobre esta
+    // misma página). Se cubren ambos casos.
+    let cargado = await this._esperarPestanas(page, 8000);
+    if (!cargado) {
+      const abierto = await this._abrirDesdeCuadricula(page, radicado);
+      if (abierto) {
+        await this._cerrarAviso(page);
+        cargado = await this._esperarPestanas(page, 10000);
+      }
+    }
 
     await this._guardarDiagnostico(page, `busqueda-${radicado}`);
-    this.logger.info(`Trámite ${radicado} buscado. URL: ${page.url()}`);
+    this.logger.info(
+      `Trámite ${radicado} buscado (pestañas=${cargado ? 'sí' : 'NO'}). URL: ${page.url()}`
+    );
+
+    if (!cargado) {
+      throw new Error(
+        `La búsqueda de ${radicado} no cargó el trámite (no aparecieron las ` +
+          `pestañas ni una cuadrícula con el radicado). ` +
+          `Se guardó el HTML en la carpeta 'diagnostico'.`
+      );
+    }
+  }
+
+  /**
+   * Pulsa el botón que busca un radicado en la página de resolución.  Se
+   * prueba primero el ID conocido (BtnBuscaRad) y los candidatos de config
+   * (los mismos que usa el BandejaScraper), y por último la lupa marcada.
+   */
+  async _clickBuscarRadicado(page) {
+    const candidatos = [
+      '#ctl00_ContentPlaceHolder1_BtnBuscaRad',
+      ...(this.config.bandeja.accionesApertura || []),
+      '[data-robot-campo="buscar"]',
+    ];
+    for (const sel of candidatos) {
+      for (const frame of page.frames()) {
+        try {
+          const el = frame.locator(sel).first();
+          if ((await el.count().catch(() => 0)) === 0) continue;
+          await el.click({ timeout: 6000 });
+          this.logger.info(`Búsqueda de radicado con: ${sel}`);
+          return sel;
+        } catch {
+          // No clicable en este marco; siguiente candidato.
+        }
+      }
+    }
+    this.logger.warn('No se pudo pulsar ningún botón de búsqueda de radicado.');
+    return null;
+  }
+
+  /**
+   * Si la búsqueda mostró una cuadrícula de trámites, localiza la celda/enlace
+   * cuyo texto (o value de botón) es exactamente el radicado y lo pulsa para
+   * abrir su formulario.  Devuelve true si logró clicarlo.
+   */
+  async _abrirDesdeCuadricula(page, radicado) {
+    const num = String(
+      radicado && typeof radicado === 'object' ? `${radicado.anio}-${radicado.numero}` : radicado
+    ).trim();
+
+    for (const frame of page.frames()) {
+      const marcado = await frame
+        .evaluate((num) => {
+          document
+            .querySelectorAll('[data-robot-abrir]')
+            .forEach((e) => e.removeAttribute('data-robot-abrir'));
+          const norm = (t) => (t || '').replace(/\s+/g, '').trim();
+          const objetivo = norm(num);
+          const cands = Array.from(
+            document.querySelectorAll(
+              'a, input[type="submit"], input[type="button"], td, span, font, b'
+            )
+          );
+          for (const el of cands) {
+            const txt = el.tagName === 'INPUT' ? norm(el.value) : norm(el.textContent);
+            if (txt === objetivo) {
+              const click = el.closest('a') || el;
+              click.setAttribute('data-robot-abrir', '1');
+              return true;
+            }
+          }
+          return false;
+        }, num)
+        .catch(() => false);
+
+      if (marcado) {
+        await frame
+          .locator('[data-robot-abrir="1"]')
+          .click({ timeout: 6000 })
+          .catch(() => {});
+        await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
+        this.logger.info(`Radicado ${num} abierto desde la cuadrícula.`);
+        return true;
+      }
+    }
+    this.logger.warn(`No se encontró el radicado ${num} en una cuadrícula.`);
+    return false;
+  }
+
+  /**
+   * Cierra el cartel emergente de edis (botón "Aceptar") si está en pantalla y
+   * devuelve su texto. Dejarlo abierto tapa la página y bloquea todo lo demás.
+   */
+  async _cerrarAviso(page) {
+    try {
+      const boton = page
+        .locator("button:has-text('Aceptar'), input[value='Aceptar'], a:has-text('Aceptar')")
+        .first();
+      if (!(await boton.isVisible({ timeout: 1500 }).catch(() => false))) return '';
+
+      const texto = await page
+        .evaluate(() => (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 200))
+        .catch(() => '');
+      await boton.click({ timeout: 3000 }).catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+      this.logger.info(`Aviso de edis cerrado: "${texto.slice(0, 120)}"`);
+      return texto;
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Sondea hasta `limiteMs` a que aparezca alguna pestaña del trámite (Predio,
+   * Propietarios, ...). Devuelve true en cuanto encuentra una.
+   */
+  async _esperarPestanas(page, limiteMs) {
+    const fin = Date.now() + limiteMs;
+    while (Date.now() < fin) {
+      for (const frame of page.frames()) {
+        const hay = await frame
+          .evaluate(MARCAR_PESTANA, { nombre: 'Predio' })
+          .then((r) => r.encontrado)
+          .catch(() => false);
+        if (hay) return true;
+      }
+      await this._cerrarAviso(page);
+      await page.waitForTimeout(600);
+    }
+    return false;
   }
 
   async _irAPestana(page, nombre) {
@@ -710,16 +854,30 @@ class MigracionTramiteService {
   }
 
   async _guardarDiagnostico(page, nombre) {
+    const carpeta = path.join(path.dirname(this.config.app.dbPath), 'diagnostico');
+    const base = path.join(carpeta, String(nombre).replace(/[\\/:*?"<>|]/g, '-'));
     try {
-      const carpeta = path.join(path.dirname(this.config.app.dbPath), 'diagnostico');
       fs.mkdirSync(carpeta, { recursive: true });
-      const base = path.join(carpeta, String(nombre).replace(/[\\/:*?"<>|]/g, '-'));
-      fs.writeFileSync(`${base}.html`, await page.content(), 'utf8');
+    } catch (error) {
+      this.logger.warn(`No se pudo crear carpeta de diagnóstico: ${error.message}`);
+      return '';
+    }
+
+    // El HTML es lo más importante (trae el DOM real): se guarda por separado
+    // para que un fallo al tomar la foto no impida capturarlo.
+    try {
+      const html = await page.content();
+      fs.writeFileSync(`${base}.html`, html, 'utf8');
+      this.logger.info(`Diagnóstico HTML guardado: ${base}.html`);
+    } catch (error) {
+      this.logger.warn(`No se pudo guardar HTML de diagnóstico: ${error.message}`);
+    }
+
+    try {
       await page.screenshot({ path: `${base}.png`, fullPage: true });
-      this.logger.info(`Diagnóstico migración guardado: ${base}`);
       return `${base}.png`;
     } catch (error) {
-      this.logger.warn(`No se pudo guardar diagnóstico: ${error.message}`);
+      this.logger.warn(`No se pudo guardar foto de diagnóstico: ${error.message}`);
       return '';
     }
   }
