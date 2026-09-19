@@ -195,7 +195,9 @@ class MigracionTramiteService {
     onProgreso('Navegando a pestaña Predio...');
     await this._irAPestana(page, 'Predio');
     onProgreso('Abriendo modo edición (Modifica)...');
-    await this._clickBotonAccion(page, 'Modifica');
+    if (!(await this._clickPorIdSufijo(page, '_BtnModPredio'))) {
+      await this._clickBotonAccion(page, 'Modifica');
+    }
     onProgreso('Llenando campos de Predio...');
     await this._llenarCamposPredio(page, datos.predio, extras);
     onProgreso('Guardando Predio...');
@@ -205,7 +207,7 @@ class MigracionTramiteService {
     const direccion = extras.direccion || this._buscarEn(datos.predio, 'DIRECCION', 'DIRECC');
     if (direccion) {
       onProgreso('Agregando dirección del predio...');
-      await this._clickBotonAgregar(page);
+      await this._clickPorIdSufijo(page, '_BtnAgregaDir');
       await this._llenarDireccion(page, direccion);
       await this._clickBotonAccion(page, 'Guardar');
     }
@@ -214,18 +216,22 @@ class MigracionTramiteService {
     onProgreso('Navegando a pestaña Propietarios...');
     await this._irAPestana(page, 'Propietarios');
     onProgreso('Agregando nuevo propietario...');
-    await this._clickBotonAgregar(page);
+    if (!(await this._clickPorIdSufijo(page, '_BtnAgregaProp'))) {
+      await this._clickBotonAgregar(page);
+    }
     onProgreso('Llenando campos de Propietario...');
     await this._llenarCamposPropietarios(page, datos.propietarios, extras);
     onProgreso('Guardando Propietario...');
     await this._clickBotonAccion(page, 'Guardar');
 
-    /* --- Fte Administrativa --- */
+    /* --- Fte Administrativa (datos SIEMPRE de los predeterminados/extras) --- */
     onProgreso('Navegando a pestaña Fte Administrativa...');
     await this._irAPestana(page, 'Fte Administrativa');
     onProgreso('Abriendo modo edición...');
-    const fteOk = await this._clickBotonAccion(page, 'Modifica');
-    if (!fteOk) await this._clickBotonAgregar(page);
+    if (!(await this._clickPorIdSufijo(page, '_BtnModEscritura'))) {
+      const fteOk = await this._clickBotonAccion(page, 'Modifica');
+      if (!fteOk) await this._clickBotonAgregar(page);
+    }
     onProgreso('Llenando campos de Fuente Administrativa...');
     await this._llenarCamposFuente(page, datos.fuente, extras);
     onProgreso('Guardando Fuente Administrativa...');
@@ -240,81 +246,126 @@ class MigracionTramiteService {
   async _abrirTramite(page, radicado) {
     const timeout = this.config.browser.timeoutMs;
     const partes = this._partes(radicado);
+    const num = `${partes.anio}-${partes.numero}`;
 
     await page.goto(this.config.bandeja.url, {
       waitUntil: 'domcontentloaded',
       timeout,
     });
 
-    const ubicados = await page.evaluate(UBICAR_BUSQUEDA);
-    if (!ubicados.anio || !ubicados.numero) {
-      throw new Error(
-        `No se ubicó el formulario de Radicación ` +
-          `(año=${ubicados.anio}, número=${ubicados.numero}, ` +
-          `estrategia=${ubicados.estrategia}).`
-      );
-    }
-    this.logger.info(
-      `Formulario ubicado (${ubicados.estrategia}): ids=${(ubicados.ids || []).join(', ')}`
-    );
-
-    // Poner valores directamente con JS (funciona incluso con campos disabled).
-    await page.evaluate(({ anio, numero }) => {
-      for (const campo of document.querySelectorAll('[data-robot-campo]')) {
-        campo.removeAttribute('disabled');
-        campo.removeAttribute('readonly');
-      }
-      const a = document.querySelector('[data-robot-campo="anio"]');
-      const n = document.querySelector('[data-robot-campo="numero"]');
-      if (a) { a.value = ''; a.value = anio; }
-      if (n) { n.value = ''; n.value = numero; }
-    }, partes);
-
-    const campoAnio = page.locator('[data-robot-campo="anio"]');
-    const campoNumero = page.locator('[data-robot-campo="numero"]');
-    const puestos = {
-      anio: await campoAnio.inputValue().catch(() => ''),
-      numero: await campoNumero.inputValue().catch(() => ''),
-    };
-    // No es fatal si no se fija: la cuadrícula lista TODOS los asignados y de
-    // ahí se abre el radicado por su enlace de todos modos.
-    if (puestos.anio !== partes.anio || puestos.numero !== partes.numero) {
-      this.logger.warn(
-        `AÑO/NÚMERO no quedaron fijos (AÑO="${puestos.anio}", NÚMERO="${puestos.numero}"); ` +
-          `se continúa y se buscará el radicado en la cuadrícula.`
-      );
-    }
-
-    // Pulsar el botón de búsqueda de radicado (ID conocido y respaldos).
+    // 1) Abrir el modal con la cuadrícula "TRÁMITES ASIGNADOS" (GridRad, dentro
+    //    del PanelPopRad). No se llenan AÑO/NÚMERO: están disabled y la
+    //    cuadrícula ya lista TODOS los trámites asignados.
     await this._clickBuscarRadicado(page);
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-    await this._cerrarAviso(page);
 
-    // La búsqueda puede: (a) cargar el trámite directo -> aparecen pestañas; o
-    // (b) mostrar una CUADRÍCULA de trámites donde hay que clicar el radicado
-    // para abrir su formulario (el BandejaScraper trabaja igual sobre esta
-    // misma página). Se cubren ambos casos.
-    let cargado = await this._esperarPestanas(page, 8000);
-    if (!cargado) {
-      const abierto = await this._abrirDesdeCuadricula(page, radicado);
-      if (abierto) {
-        await this._cerrarAviso(page);
-        cargado = await this._esperarPestanas(page, 10000);
-      }
-    }
-
-    await this._guardarDiagnostico(page, `busqueda-${radicado}`);
-    this.logger.info(
-      `Trámite ${radicado} buscado (pestañas=${cargado ? 'sí' : 'NO'}). URL: ${page.url()}`
-    );
-
-    if (!cargado) {
+    // 2) Clic en el radicado dentro de la cuadrícula. Cada fila trae el radicado
+    //    como <input type="submit" value="2026-8728">; pulsarlo hace postback,
+    //    carga el trámite y cierra el modal.
+    const pulsado = await this._clickRadicadoEnGrid(page, num, 15000);
+    if (!pulsado) {
+      await this._guardarDiagnostico(page, `busqueda-${radicado}`);
       throw new Error(
-        `La búsqueda de ${radicado} no cargó el trámite (no aparecieron las ` +
-          `pestañas ni una cuadrícula con el radicado). ` +
+        `No se encontró el radicado ${num} en la cuadrícula TRÁMITES ASIGNADOS. ` +
           `Se guardó el HTML en la carpeta 'diagnostico'.`
       );
     }
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+    await this._cerrarAviso(page);
+
+    // 3) Esperar a que el modal se cierre y el trámite quede realmente cargado
+    //    (el campo Radicación NÚMERO debe pasar a ser el buscado).
+    const cargado = await this._esperarTramiteCargado(page, partes.numero, 15000);
+
+    await this._guardarDiagnostico(page, `busqueda-${radicado}`);
+    this.logger.info(
+      `Trámite ${radicado} abierto (cargado=${cargado ? 'sí' : 'NO'}). URL: ${page.url()}`
+    );
+
+    if (!cargado) {
+      throw new Error(
+        `Se pulsó el radicado ${num} pero el trámite no terminó de cargar ` +
+          `(el modal no se cerró o el NÚMERO no coincidió). Ver 'diagnostico'.`
+      );
+    }
+  }
+
+  /**
+   * Pulsa el radicado dentro de la cuadrícula GridRad (es un
+   * <input type="submit" value="AAAA-NNNN">). Sondea hasta `limiteMs` porque la
+   * cuadrícula se llena por postback tras abrir el modal.
+   */
+  async _clickRadicadoEnGrid(page, num, limiteMs) {
+    const objetivo = String(num).replace(/\s+/g, '').trim();
+    const fin = Date.now() + limiteMs;
+
+    while (Date.now() < fin) {
+      for (const frame of page.frames()) {
+        const marcado = await frame
+          .evaluate((objetivo) => {
+            document
+              .querySelectorAll('[data-robot-abrir]')
+              .forEach((e) => e.removeAttribute('data-robot-abrir'));
+            const norm = (t) => (t || '').replace(/\s+/g, '').trim();
+            // El radicado es un botón submit con value="AAAA-NNNN"; se acepta
+            // también un enlace por si en otra pantalla cambia.
+            for (const el of document.querySelectorAll(
+              'input[type="submit"], input[type="button"], a'
+            )) {
+              const txt = el.tagName === 'INPUT' ? norm(el.value) : norm(el.textContent);
+              if (txt === objetivo) {
+                el.setAttribute('data-robot-abrir', '1');
+                return true;
+              }
+            }
+            return false;
+          }, objetivo)
+          .catch(() => false);
+
+        if (marcado) {
+          await frame
+            .locator('[data-robot-abrir="1"]')
+            .click({ timeout: 6000 })
+            .catch(() => {});
+          this.logger.info(`Radicado ${num} pulsado en la cuadrícula.`);
+          return true;
+        }
+      }
+      await page.waitForTimeout(500);
+    }
+    this.logger.warn(`Radicado ${num} no apareció en la cuadrícula.`);
+    return false;
+  }
+
+  /**
+   * Espera a que el modal PanelPopRad se cierre y el trámite buscado quede
+   * cargado (el input Radicación NÚMERO pasa a ser el número buscado).
+   */
+  async _esperarTramiteCargado(page, numero, limiteMs) {
+    const fin = Date.now() + limiteMs;
+    while (Date.now() < fin) {
+      const estado = await page
+        .evaluate((numero) => {
+          const modal = document.getElementById('ctl00_ContentPlaceHolder1_PanelPopRad');
+          // El modal es position:fixed, así que offsetParent no sirve; se mira
+          // display/visibility computados.
+          const est = modal ? getComputedStyle(modal) : null;
+          const modalVisible = Boolean(
+            modal && est && est.display !== 'none' && est.visibility !== 'hidden'
+          );
+          const tnum =
+            document.getElementById('ctl00_ContentPlaceHolder1_TNumRad') ||
+            document.querySelector('[id$="TNumRad"]');
+          const cargadoNum = Boolean(tnum && String(tnum.value).trim() === String(numero));
+          return { modalVisible, cargadoNum };
+        }, numero)
+        .catch(() => ({ modalVisible: true, cargadoNum: false }));
+
+      if (!estado.modalVisible && estado.cargadoNum) return true;
+      await this._cerrarAviso(page);
+      await page.waitForTimeout(500);
+    }
+    return false;
   }
 
   /**
@@ -346,58 +397,30 @@ class MigracionTramiteService {
   }
 
   /**
-   * Si la búsqueda mostró una cuadrícula de trámites, localiza la celda/enlace
-   * cuyo texto (o value de botón) es exactamente el radicado y lo pulsa para
-   * abrir su formulario.  Devuelve true si logró clicarlo.
+   * Pulsa un botón por el SUFIJO de su id (los controles de edis tienen ids
+   * largos tipo ctl00_ContentPlaceHolder1_TabContainer1_TabPanel1_BtnModPredio;
+   * el sufijo "_BtnModPredio" lo identifica sin ambigüedad). Busca en todos los
+   * marcos y solo pulsa el que esté visible.  Devuelve true si pulsó alguno.
    */
-  async _abrirDesdeCuadricula(page, radicado) {
-    const num = String(
-      radicado && typeof radicado === 'object' ? `${radicado.anio}-${radicado.numero}` : radicado
-    ).trim();
-
+  async _clickPorIdSufijo(page, sufijo, { timeout = 8000 } = {}) {
     for (const frame of page.frames()) {
-      const marcado = await frame
-        .evaluate((num) => {
-          document
-            .querySelectorAll('[data-robot-abrir]')
-            .forEach((e) => e.removeAttribute('data-robot-abrir'));
-          const norm = (t) => (t || '').replace(/\s+/g, '').trim();
-          const objetivo = norm(num);
-
-          // 1) Preferir lo que realmente navega: enlaces y botones. El radicado
-          //    en la cuadrícula es un <a>2026-8728</a>.
-          for (const el of document.querySelectorAll(
-            'a, input[type="submit"], input[type="button"]'
-          )) {
-            const txt = el.tagName === 'INPUT' ? norm(el.value) : norm(el.textContent);
-            if (txt === objetivo) {
-              el.setAttribute('data-robot-abrir', '1');
-              return true;
-            }
-          }
-          // 2) Respaldo: una celda/span con ese texto; se clica su enlace interno
-          //    si lo tiene.
-          for (const el of document.querySelectorAll('td, span, font, b')) {
-            if (norm(el.textContent) !== objetivo) continue;
-            const enlace = el.querySelector('a') || el;
-            enlace.setAttribute('data-robot-abrir', '1');
-            return true;
-          }
-          return false;
-        }, num)
-        .catch(() => false);
-
-      if (marcado) {
-        await frame
-          .locator('[data-robot-abrir="1"]')
-          .click({ timeout: 6000 })
-          .catch(() => {});
-        await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
-        this.logger.info(`Radicado ${num} abierto desde la cuadrícula.`);
-        return true;
+      const candidatos = frame.locator(`[id$="${sufijo}"]`);
+      const total = await candidatos.count().catch(() => 0);
+      for (let i = 0; i < total; i++) {
+        const el = candidatos.nth(i);
+        if (!(await el.isVisible().catch(() => false))) continue;
+        try {
+          await el.click({ timeout });
+          await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+          await page.waitForTimeout(1000);
+          this.logger.info(`Botón *${sufijo} pulsado.`);
+          return true;
+        } catch {
+          // Visible pero no clicable ahora; se prueba el siguiente.
+        }
       }
     }
-    this.logger.warn(`No se encontró el radicado ${num} en una cuadrícula.`);
+    this.logger.warn(`Botón *${sufijo} no encontrado/clicable.`);
     return false;
   }
 
@@ -422,26 +445,6 @@ class MigracionTramiteService {
     } catch {
       return '';
     }
-  }
-
-  /**
-   * Sondea hasta `limiteMs` a que aparezca alguna pestaña del trámite (Predio,
-   * Propietarios, ...). Devuelve true en cuanto encuentra una.
-   */
-  async _esperarPestanas(page, limiteMs) {
-    const fin = Date.now() + limiteMs;
-    while (Date.now() < fin) {
-      for (const frame of page.frames()) {
-        const hay = await frame
-          .evaluate(MARCAR_PESTANA, { nombre: 'Predio' })
-          .then((r) => r.encontrado)
-          .catch(() => false);
-        if (hay) return true;
-      }
-      await this._cerrarAviso(page);
-      await page.waitForTimeout(600);
-    }
-    return false;
   }
 
   async _irAPestana(page, nombre) {
