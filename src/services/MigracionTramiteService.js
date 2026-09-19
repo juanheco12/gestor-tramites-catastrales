@@ -303,6 +303,9 @@ class MigracionTramiteService {
 
   async escribirDestino(page, radicado, datos, extras, onProgreso = () => {}) {
     this._atenderDialogos(page);
+    // Lo que edis rechace se junta aquí para avisarlo al final, en vez de
+    // dejarlo solo en el log.
+    const avisos = [];
     onProgreso('Abriendo trámite destino...');
     await this._abrirTramite(page, radicado);
 
@@ -378,7 +381,17 @@ class MigracionTramiteService {
         .catch(() => {});
       await page.waitForTimeout(500);
       onProgreso('Aplicando zonas digitales...');
-      await this._aplicarZonasDigitales(page);
+      const zonas = await this._aplicarZonasDigitales(page);
+      if (!zonas.aplicada) {
+        // Suele ser un problema de la base gráfica del predio, no del robot:
+        // hay que verlo, no dejarlo pasar en silencio.
+        avisos.push(
+          zonas.aviso
+            ? `Zonas digitales: ${zonas.aviso}`
+            : 'Zonas digitales: no quedaron aplicadas.'
+        );
+        onProgreso(`Zonas no aplicadas: ${zonas.aviso || 'sin detalle'}`);
+      }
     } else {
       this.logger.warn('Sin área de terreno del origen: se omite el paso de Terreno.');
     }
@@ -405,6 +418,7 @@ class MigracionTramiteService {
 
     await this._guardarDiagnostico(page, `destino-${radicado}`);
     onProgreso('Migración completada. Revise en pantalla.');
+    return { avisos };
   }
 
   /* ===================== NAVEGACIÓN ===================== */
@@ -601,12 +615,23 @@ class MigracionTramiteService {
         .first();
       if (!(await boton.isVisible({ timeout: 1500 }).catch(() => false))) return '';
 
-      const texto = await page
-        .evaluate(() => (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 200))
+      // El texto del cartel, no el de toda la página: se sube desde el botón
+      // hasta el contenedor que trae el mensaje (p. ej. "ERROR: NO HUBO
+      // INTERSECCIÓN CON ZONAS").
+      const texto = await boton
+        .evaluate((b) => {
+          let nodo = b.parentElement;
+          for (let i = 0; i < 5 && nodo; i++) {
+            const t = (nodo.innerText || '').replace(/\s+/g, ' ').trim();
+            if (t.length > 8 && t.length < 400) return t;
+            nodo = nodo.parentElement;
+          }
+          return '';
+        })
         .catch(() => '');
       await boton.click({ timeout: 3000 }).catch(() => {});
-      await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
-      this.logger.info(`Aviso de edis cerrado: "${texto.slice(0, 120)}"`);
+      await page.waitForTimeout(800);
+      this.logger.info(`Aviso de edis: "${texto.slice(0, 200)}"`);
       return texto;
     } catch {
       return '';
@@ -678,12 +703,15 @@ class MigracionTramiteService {
   }
 
   /**
-   * Pulsa "Aplica Zonas Digitales".  El clic ya espera a que termine el
-   * postback, así que después solo se confirma el resultado con un sondeo
-   * CORTO: aplicar zonas es cuestión de segundos.  Si no se puede confirmar,
-   * se sigue adelante en vez de bloquear la migración.
+   * Pulsa "Aplica Zonas Digitales" y devuelve el resultado.  edis puede
+   * responder con un cartel propio ("ERROR: NO HUBO INTERSECCIÓN CON ZONAS"
+   * cuando el predio no tiene geometría que cruce con las zonas); ese mensaje
+   * se recoge y se devuelve para poder mostrárselo a quien usa el programa, en
+   * vez de quedar enterrado en el log.
+   * @returns {Promise<{aplicada: boolean, aviso: string}>}
    */
   async _aplicarZonasDigitales(page) {
+    let avisoEdis = '';
     // Comprobar que el área sigue escrita justo antes de pulsar: si un postback
     // anterior la borró, aplicar zonas no haría nada y quedaría sin explicación.
     // Si edis vuelve a deshabilitar el campo, su valor NO viaja en el envío y
@@ -763,6 +791,11 @@ class MigracionTramiteService {
         .catch(() => postback);
       estado = await this._leerEstadoTerreno(page);
       if (estado.filasZonas > 0) break;
+      const aviso = await this._cerrarAviso(page);
+      if (aviso) {
+        avisoEdis = aviso;
+        break;
+      }
       await page.waitForTimeout(1000);
     }
     page.off('response', onResponse);
@@ -776,21 +809,23 @@ class MigracionTramiteService {
       const zona = limpio.match(/.{0,120}zona.{0,200}/i);
       this.logger.info(`Respuesta de edis (zonas): ${zona ? zona[0] : limpio.slice(0, 300)}`);
     }
-    await this._cerrarAviso(page);
+    avisoEdis = avisoEdis || (await this._cerrarAviso(page));
 
     estado = await this._leerEstadoTerreno(page);
     this.logger.info(
       `Terreno tras aplicar zonas: area="${estado.area}" total="${estado.total}" ` +
-        `filasZonas=${estado.filasZonas} mensaje="${estado.mensaje}"`
+        `filasZonas=${estado.filasZonas}`
     );
 
     if (estado.filasZonas > 0 || parseFloat(String(estado.total).replace(',', '.')) > 0) {
       this.logger.info('Zonas digitales aplicadas.');
-      return true;
+      return { aplicada: true, aviso: avisoEdis };
     }
     await this._guardarDiagnostico(page, 'zonas-digitales');
-    this.logger.warn('Las zonas no quedaron aplicadas; ver diagnostico/zonas-digitales.');
-    return false;
+    this.logger.warn(
+      `Las zonas no quedaron aplicadas${avisoEdis ? `: ${avisoEdis}` : ''}.`
+    );
+    return { aplicada: false, aviso: avisoEdis };
   }
 
   /** Estado de la pestaña Terreno: área, suma, filas de zonas y avisos. */

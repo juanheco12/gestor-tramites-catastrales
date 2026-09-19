@@ -838,7 +838,14 @@ function registrarIpc(contenedor, obtenerVentana) {
 
         // 2. Escribir datos en el destino
         progreso(`Escribiendo datos en el trámite ${destino}...`);
-        await migracionService.escribirDestino(page, destino, datosOrigen, extras, progreso);
+        const resultado = await migracionService.escribirDestino(
+          page,
+          destino,
+          datosOrigen,
+          extras,
+          progreso
+        );
+        const avisos = (resultado && resultado.avisos) || [];
 
         notificar('migracion', {
           mensaje: `Datos migrados de ${origen} a ${destino}. Revise la pantalla y guarde.`,
@@ -847,7 +854,10 @@ function registrarIpc(contenedor, obtenerVentana) {
 
         return {
           ok: true,
-          mensaje: `Datos migrados de ${origen} a ${destino}. Revise la pantalla de edis y guarde los cambios manualmente.`,
+          avisos,
+          mensaje:
+            `Datos migrados de ${origen} a ${destino}. Revise la pantalla de edis y guarde los cambios manualmente.` +
+            (avisos.length > 0 ? ` Atención: ${avisos.join(' | ')}` : ''),
           camposLeidos: {
             predio: Object.keys(datosOrigen.predio || {}).length,
             propietarios: Object.keys(datosOrigen.propietarios || {}).length,
