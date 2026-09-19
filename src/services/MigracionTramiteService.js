@@ -165,52 +165,147 @@ class MigracionTramiteService {
     onProgreso('Abriendo trámite origen...');
     await this._abrirTramite(page, radicado);
 
+    // Datos del solicitante (pestaña "Datos de la radicación"): de aquí sale el
+    // número de documento y el nombre del propietario.
+    const solicitante = await this._leerPorIds(page, {
+      cedula: '_TxtCedula',
+      nombre: '_TxtNombre',
+    });
+
     onProgreso('Leyendo pestaña Predio...');
     await this._irAPestana(page, 'Predio');
     const predio = await this._leerCamposVisibles(page);
+    // Lectura precisa por id (los rótulos de la tabla no son fiables).
+    const campos = await this._leerPorIds(page, {
+      destino: '_CmbDestino',
+      orip: '_TCodigoORIP',
+      matricula: '_TMatricula',
+      avaluo: '_TAvaluo',
+    });
+    campos.cedula = solicitante.cedula;
+    campos.nombre = solicitante.nombre;
+    campos.direccion = await this._leerDireccionOrigen(page);
 
     onProgreso('Leyendo pestaña Propietarios...');
     await this._irAPestana(page, 'Propietarios');
     const propietarios = await this._leerCamposVisibles(page);
 
-    onProgreso('Leyendo pestaña Fte Administrativa...');
-    await this._irAPestana(page, 'Fte Administrativa');
-    const fuente = await this._leerCamposVisibles(page);
+    // La Fte Administrativa del origen (cancelación) viene vacía: esos datos
+    // salen siempre de los predeterminados que indica el usuario.
+    const fuente = {};
 
     await this._guardarDiagnostico(page, `origen-${radicado}`);
 
     this.logger.info(
-      `Origen ${radicado}: predio=${Object.keys(predio).length}, ` +
-        `propietarios=${Object.keys(propietarios).length}, fuente=${Object.keys(fuente).length}`
+      `Origen ${radicado}: destino="${campos.destino}" matricula="${campos.orip}-${campos.matricula}" ` +
+        `direccion="${campos.direccion}" cedula="${campos.cedula}" nombre="${campos.nombre}"`
     );
 
-    return { predio, propietarios, fuente };
+    return { predio, propietarios, fuente, campos };
+  }
+
+  /** Lee varios campos por sufijo de id. Devuelve {clave: valor}. */
+  async _leerPorIds(page, mapa) {
+    return page
+      .evaluate((mapa) => {
+        const salida = {};
+        for (const [clave, sufijo] of Object.entries(mapa)) {
+          const el = document.querySelector(`[id$="${sufijo}"]`);
+          if (!el) {
+            salida[clave] = '';
+            continue;
+          }
+          if (el.tagName === 'SELECT') {
+            const op = el.options[el.selectedIndex];
+            salida[clave] = op ? op.text.trim() : '';
+          } else {
+            salida[clave] = (el.value || el.textContent || '').trim();
+          }
+        }
+        return salida;
+      }, mapa)
+      .catch(() => Object.fromEntries(Object.keys(mapa).map((k) => [k, ''])));
+  }
+
+  /**
+   * Dirección del predio en el origen: primera fila de la grilla DIRECCIONES
+   * DEL PREDIO (la columna DIRECCION, p. ej. "CL 129 5C - 36").
+   */
+  async _leerDireccionOrigen(page) {
+    return page
+      .evaluate(() => {
+        const norm = (t) =>
+          (t || '')
+            .normalize('NFD')
+            .replace(/[̀-ͯ]/g, '')
+            .toUpperCase()
+            .trim();
+        for (const tabla of document.querySelectorAll('table')) {
+          const filas = Array.from(tabla.querySelectorAll('tr'));
+          if (filas.length < 2) continue;
+          const encabezados = Array.from(filas[0].children).map((c) => norm(c.textContent));
+          const iDir = encabezados.findIndex((h) => h === 'DIRECCION');
+          if (iDir < 0) continue;
+          for (const fila of filas.slice(1)) {
+            const celdas = Array.from(fila.children);
+            const valor = ((celdas[iDir] && celdas[iDir].textContent) || '').trim();
+            if (valor) return valor;
+          }
+        }
+        return '';
+      })
+      .catch(() => '');
   }
 
   async escribirDestino(page, radicado, datos, extras, onProgreso = () => {}) {
     onProgreso('Abriendo trámite destino...');
     await this._abrirTramite(page, radicado);
 
-    /* --- Predio --- */
+    const campos = datos.campos || {};
+
+    /* --- Predio: "Modifica" abre el modal PanelPopPredio con su propia copia
+       de los campos (los de la pantalla de atrás son de solo lectura). --- */
     onProgreso('Navegando a pestaña Predio...');
     await this._irAPestana(page, 'Predio');
     onProgreso('Abriendo modo edición (Modifica)...');
-    await this._entrarModoEdicion(page, '_BtnModPredio', '_CmbDestino');
-    onProgreso('Llenando campos de Predio...');
-    await this._llenarCamposPredio(page, datos.predio, extras);
-    onProgreso('Guardando Predio...');
-    await this._clickBotonAccion(page, 'Guardar');
+    await this._clickPorIdSufijo(page, '_BtnModPredio');
+    await this._esperarModal(page, 'PanelPopPredio');
 
-    // Un modal abierto tapa la página entera: se cierra antes de seguir.
+    onProgreso('Llenando campos de Predio...');
+    await this._llenarCamposPredio(page, campos, extras);
+    onProgreso('Guardando Predio...');
+    if (!(await this._clickPorIdSufijo(page, '_BtnGuardaPred'))) {
+      await this._clickBotonAccion(page, 'Guardar');
+    }
+    await this._cerrarAviso(page);
     await this._cerrarModalAbierto(page);
+
+    /* --- Dirección del predio: "+" abre PanelPopDireccion; la dirección del
+       origen se pega en "Complemento dirección". --- */
+    const direccion = extras.direccion || campos.direccion || '';
+    if (direccion) {
+      onProgreso('Agregando dirección del predio...');
+      if (await this._clickPorIdSufijo(page, '_BtnAgregaDir')) {
+        await this._esperarModal(page, 'PanelPopDireccion');
+        await this._llenarInput(page, 'Complemento direccion', direccion, {
+          idSufijo: '_TComplementoDir',
+        });
+        if (!(await this._clickPorIdSufijo(page, '_BtnGuardaDir'))) {
+          await this._clickBotonAccion(page, 'Guardar');
+        }
+        await this._cerrarAviso(page);
+        await this._cerrarModalAbierto(page);
+      }
+    }
 
     /* --- Propietarios --- */
     onProgreso('Navegando a pestaña Propietarios...');
     await this._irAPestana(page, 'Propietarios');
     onProgreso('Agregando nuevo propietario...');
     if (await this._clickPorIdSufijo(page, '_BtnAgregaProp')) {
+      await this._esperarModal(page, 'PanelPopPropietario');
       onProgreso('Llenando campos de Propietario...');
-      await this._llenarCamposPropietarios(page, datos.propietarios, extras);
+      await this._llenarCamposPropietarios(page, datos.propietarios, extras, campos);
       onProgreso('Guardando Propietario...');
       if (!(await this._clickPorIdSufijo(page, '_BtnGuardaProp'))) {
         await this._clickBotonAccion(page, 'Guardar');
@@ -228,6 +323,7 @@ class MigracionTramiteService {
     if (!(await this._clickPorIdSufijo(page, '_BtnModEscritura'))) {
       await this._clickBotonAccion(page, 'Modifica');
     }
+    await this._esperarModal(page, 'PanelPopEscritura');
     await this._cerrarAviso(page);
     onProgreso('Llenando campos de Fuente Administrativa...');
     await this._llenarCamposFuente(page, datos.fuente, extras);
@@ -426,50 +522,6 @@ class MigracionTramiteService {
   }
 
   /**
-   * Pulsa el botón de edición ("Modifica") y COMPRUEBA que los campos de la
-   * sección quedaron habilitados, usando un campo testigo.  edis hace postback
-   * al pulsar, así que se sondea hasta que el testigo deje de estar disabled.
-   * Devuelve true si quedó en modo edición.
-   */
-  async _entrarModoEdicion(page, sufijoBoton, sufijoTestigo) {
-    const habilitado = () =>
-      page
-        .evaluate((s) => {
-          const el = document.querySelector(`[id$="${s}"]`);
-          return Boolean(el && !el.disabled);
-        }, sufijoTestigo)
-        .catch(() => false);
-
-    if (await habilitado()) {
-      this.logger.info(`La sección ya estaba en modo edición (${sufijoTestigo}).`);
-      return true;
-    }
-
-    for (let intento = 1; intento <= 2; intento++) {
-      const pulsado = await this._clickPorIdSufijo(page, sufijoBoton);
-      await this._cerrarAviso(page);
-      if (!pulsado && intento === 2) break;
-
-      const fin = Date.now() + 8000;
-      while (Date.now() < fin) {
-        if (await habilitado()) {
-          this.logger.info(`Modo edición activo tras pulsar *${sufijoBoton}.`);
-          return true;
-        }
-        await page.waitForTimeout(500);
-      }
-      this.logger.warn(
-        `*${sufijoBoton} no habilitó ${sufijoTestigo} (intento ${intento}).`
-      );
-    }
-
-    this.logger.warn(
-      `No se logró el modo edición con *${sufijoBoton}; se escribirá forzando los campos.`
-    );
-    return false;
-  }
-
-  /**
    * Cierra el cartel emergente de edis (botón "Aceptar") si está en pantalla y
    * devuelve su texto. Dejarlo abierto tapa la página y bloquea todo lo demás.
    */
@@ -553,6 +605,32 @@ class MigracionTramiteService {
       }
     }
     this.logger.warn(`Botón "${texto}" no encontrado.`);
+    return false;
+  }
+
+  /**
+   * Espera a que el modal indicado quede visible (edis los abre por postback).
+   * Devuelve true si apareció.
+   */
+  async _esperarModal(page, idParcial, limiteMs = 10000) {
+    const fin = Date.now() + limiteMs;
+    while (Date.now() < fin) {
+      const visible = await page
+        .evaluate((id) => {
+          const el = document.querySelector(`[id$="${id}"]`);
+          if (!el) return false;
+          const est = getComputedStyle(el);
+          return est.display !== 'none' && est.visibility !== 'hidden';
+        }, idParcial)
+        .catch(() => false);
+      if (visible) {
+        await page.waitForTimeout(600);
+        this.logger.info(`Modal ${idParcial} visible.`);
+        return true;
+      }
+      await page.waitForTimeout(400);
+    }
+    this.logger.warn(`El modal ${idParcial} no apareció.`);
     return false;
   }
 
@@ -891,38 +969,37 @@ class MigracionTramiteService {
 
   /* ===================== LLENADO POR SECCIÓN ===================== */
 
-  async _llenarCamposPredio(page, datosOrigen, extras) {
-    const buscar = this._crearBuscador(datosOrigen);
-
-    await this._llenarInput(page, 'Destino', extras.destino || buscar('DESTINO'), {
-      idSufijo: '_CmbDestino',
+  /**
+   * Campos del MODAL "DATOS DEL PREDIO" (PanelPopPredio).  Sus ids terminan en
+   * "M" (CmbDestinoM, TMatriculaM...); los de la pantalla de atrás son de solo
+   * lectura y escribir en ellos no surte efecto.
+   */
+  async _llenarCamposPredio(page, campos, extras) {
+    await this._llenarInput(page, 'Destino', extras.destino || campos.destino, {
+      idSufijo: '_CmbDestinoM',
     });
 
-    // La matrícula va partida en dos campos: ORIP (círculo, p. ej. 140) y el
-    // número (p. ej. 152992).
-    const matriculaRaw = extras.matriculaNumero || buscar('MATRICULA');
-    let circulo = extras.matriculaCirculo || '';
-    let numero = matriculaRaw || '';
-    if (!circulo && matriculaRaw && matriculaRaw.includes('-')) {
-      [circulo, numero] = matriculaRaw.split('-', 2);
+    // Matrícula partida: ORIP (círculo, p. ej. 140) + número (p. ej. 152987).
+    let circulo = extras.matriculaCirculo || campos.orip || '';
+    let numero = extras.matriculaNumero || campos.matricula || '';
+    if (!circulo && numero && numero.includes('-')) {
+      [circulo, numero] = numero.split('-', 2);
     }
     if (circulo) {
-      await this._llenarInput(page, 'Matricula', circulo, { idSufijo: '_TCodigoORIP' });
+      await this._llenarInput(page, 'ORIP', circulo, { idSufijo: '_TCodigoORIPM' });
     }
     if (numero) {
-      await this._llenarInput(page, 'Matricula', numero, { idSufijo: '_TMatricula' });
+      await this._llenarInput(page, 'Matricula', numero, { idSufijo: '_TMatriculaM' });
     }
 
-    await this._llenarInput(
-      page,
-      'Tipo Predio',
-      extras.tipoPredio || buscar('TIPO PREDIO', 'TIPO DE PREDIO'),
-      { idSufijo: '_CmbTipoPredio' }
-    );
+    // El tipo de predio no viene del origen: siempre Predio.Privado.
+    await this._llenarInput(page, 'Tipo Predio', extras.tipoPredio || 'Predio.Privado', {
+      idSufijo: '_CmbTipoPredioM',
+    });
   }
 
   /** Campos del modal PROPIETARIO (PanelPopPropietario), por id real. */
-  async _llenarCamposPropietarios(page, datosOrigen, extras) {
+  async _llenarCamposPropietarios(page, datosOrigen, extras, campos = {}) {
     const buscar = this._crearBuscador(datosOrigen);
 
     await this._llenarInput(
@@ -931,10 +1008,11 @@ class MigracionTramiteService {
       extras.tipoDocumento || buscar('TIPO DOC', 'TIPO DCTO'),
       { idSufijo: '_CmbTipoDoc' }
     );
+    // El número de documento sale de la cédula del solicitante del trámite.
     await this._llenarInput(
       page,
       'Documento',
-      extras.documento || buscar('DOCUMENTO', 'CEDULA'),
+      extras.documento || campos.cedula || buscar('DOCUMENTO', 'CEDULA'),
       { idSufijo: '_TDcto' }
     );
     await this._llenarInput(page, 'Tipo Derecho', extras.tipoDerecho || 'Dominio', {
@@ -959,7 +1037,7 @@ class MigracionTramiteService {
       idSufijo: '_CmbGrupoEtnico',
     });
 
-    const nombreCompleto = extras.nombre || buscar('NOMBRE');
+    const nombreCompleto = extras.nombre || campos.nombre || buscar('NOMBRE');
     if (nombreCompleto) {
       const n = this._separarNombre(nombreCompleto);
       await this._llenarInput(page, '1er Nombre', n.primerNombre, { idSufijo: '_TNombre1' });
