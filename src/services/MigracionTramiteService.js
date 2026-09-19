@@ -161,7 +161,26 @@ class MigracionTramiteService {
 
   /* ===================== API PÚBLICA ===================== */
 
+  /**
+   * edis pide confirmación con confirm()/alert() en varios botones (entre
+   * ellos "Aplica Zonas Digitales").  Playwright, si nadie atiende el diálogo,
+   * lo DESCARTA, que equivale a pulsar "Cancelar": la acción se anulaba en
+   * silencio y el log decía que el botón sí se había pulsado.  Aceptándolos el
+   * robot se comporta como la persona que da "Aceptar".
+   */
+  _atenderDialogos(page) {
+    if (page.__robotDialogos) return;
+    page.__robotDialogos = true;
+    page.on('dialog', async (dialogo) => {
+      this.logger.info(
+        `Diálogo de edis aceptado: "${String(dialogo.message()).slice(0, 150)}"`
+      );
+      await dialogo.accept().catch(() => {});
+    });
+  }
+
   async leerOrigen(page, radicado, onProgreso = () => {}) {
+    this._atenderDialogos(page);
     onProgreso('Abriendo trámite origen...');
     await this._abrirTramite(page, radicado);
 
@@ -283,6 +302,7 @@ class MigracionTramiteService {
   }
 
   async escribirDestino(page, radicado, datos, extras, onProgreso = () => {}) {
+    this._atenderDialogos(page);
     onProgreso('Abriendo trámite destino...');
     await this._abrirTramite(page, radicado);
 
@@ -656,6 +676,11 @@ class MigracionTramiteService {
    * se sigue adelante en vez de bloquear la migración.
    */
   async _aplicarZonasDigitales(page) {
+    // Comprobar que el área sigue escrita justo antes de pulsar: si un postback
+    // anterior la borró, aplicar zonas no haría nada y quedaría sin explicación.
+    const antes = await this._leerPorIds(page, { area: '_TAreaTTPrivada' });
+    this.logger.info(`Área de terreno antes de aplicar zonas: "${antes.area}"`);
+
     if (!(await this._clickPorIdSufijo(page, '_BtnGetZonasD', { timeout: 15000 }))) {
       this.logger.warn('No se encontró el botón "Aplica Zonas Digitales".');
       return false;
