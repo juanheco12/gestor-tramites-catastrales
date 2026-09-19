@@ -349,8 +349,8 @@ class MigracionTramiteService {
       await this._llenarInput(page, 'Area Terreno Privado', areaTerreno, {
         idSufijo: '_TAreaTTPrivada',
       });
-      onProgreso('Aplicando zonas digitales (puede tardar)...');
-      await this._aplicarZonasDigitales(page, onProgreso);
+      onProgreso('Aplicando zonas digitales...');
+      await this._aplicarZonasDigitales(page);
     } else {
       this.logger.warn('Sin área de terreno del origen: se omite el paso de Terreno.');
     }
@@ -650,24 +650,20 @@ class MigracionTramiteService {
   }
 
   /**
-   * Pulsa "Aplica Zonas Digitales" y espera a que termine.  El proceso tarda
-   * (edis recalcula contra la cartografía), así que se sondea hasta 3 minutos
-   * a que aparezcan zonas o el aviso de fin, en vez de una espera fija.
+   * Pulsa "Aplica Zonas Digitales".  El clic ya espera a que termine el
+   * postback, así que después solo se confirma el resultado con un sondeo
+   * CORTO: aplicar zonas es cuestión de segundos.  Si no se puede confirmar,
+   * se sigue adelante en vez de bloquear la migración.
    */
-  async _aplicarZonasDigitales(page, onProgreso = () => {}) {
+  async _aplicarZonasDigitales(page) {
     if (!(await this._clickPorIdSufijo(page, '_BtnGetZonasD', { timeout: 15000 }))) {
       this.logger.warn('No se encontró el botón "Aplica Zonas Digitales".');
       return false;
     }
+    await this._cerrarAviso(page);
 
-    const limite = Date.now() + 180000;
+    const limite = Date.now() + 20000;
     while (Date.now() < limite) {
-      const aviso = await this._cerrarAviso(page);
-      if (/APLICAD|ZONA/i.test(aviso || '')) {
-        this.logger.info('Zonas digitales aplicadas (aviso de edis).');
-        return true;
-      }
-      // También se da por bueno cuando la suma de áreas deja de estar en cero.
       const total = await page
         .evaluate(() => {
           const el = document.querySelector('[id$="_LblAreaTotalTerreno"]');
@@ -675,13 +671,14 @@ class MigracionTramiteService {
         })
         .catch(() => '');
       if (total && parseFloat(String(total).replace(',', '.')) > 0) {
-        this.logger.info(`Zonas digitales aplicadas (área total ${total}).`);
+        this.logger.info(`Zonas digitales aplicadas (suma de áreas ${total}).`);
         return true;
       }
-      onProgreso('Aplicando zonas digitales (puede tardar)...');
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(1000);
     }
-    this.logger.warn('Se agotó la espera de "Aplica Zonas Digitales".');
+    this.logger.warn(
+      'No se pudo confirmar la suma de áreas tras aplicar zonas; se continúa.'
+    );
     return false;
   }
 
