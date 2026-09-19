@@ -268,8 +268,7 @@ class MigracionTramiteService {
     onProgreso('Navegando a pestaña Predio...');
     await this._irAPestana(page, 'Predio');
     onProgreso('Abriendo modo edición (Modifica)...');
-    await this._clickPorIdSufijo(page, '_BtnModPredio');
-    await this._esperarModal(page, 'PanelPopPredio');
+    await this._abrirModalConReintento(page, 'PanelPopPredio', '_BtnModPredio', 'Modifica');
 
     onProgreso('Llenando campos de Predio...');
     await this._llenarCamposPredio(page, campos, extras);
@@ -285,8 +284,7 @@ class MigracionTramiteService {
     const direccion = extras.direccion || campos.direccion || '';
     if (direccion) {
       onProgreso('Agregando dirección del predio...');
-      if (await this._clickPorIdSufijo(page, '_BtnAgregaDir')) {
-        await this._esperarModal(page, 'PanelPopDireccion');
+      if (await this._abrirModalConReintento(page, 'PanelPopDireccion', '_BtnAgregaDir')) {
         await this._llenarInput(page, 'Complemento direccion', direccion, {
           idSufijo: '_TComplementoDir',
         });
@@ -302,8 +300,7 @@ class MigracionTramiteService {
     onProgreso('Navegando a pestaña Propietarios...');
     await this._irAPestana(page, 'Propietarios');
     onProgreso('Agregando nuevo propietario...');
-    if (await this._clickPorIdSufijo(page, '_BtnAgregaProp')) {
-      await this._esperarModal(page, 'PanelPopPropietario');
+    if (await this._abrirModalConReintento(page, 'PanelPopPropietario', '_BtnAgregaProp')) {
       onProgreso('Llenando campos de Propietario...');
       await this._llenarCamposPropietarios(page, datos.propietarios, extras, campos);
       onProgreso('Guardando Propietario...');
@@ -320,10 +317,12 @@ class MigracionTramiteService {
     onProgreso('Navegando a pestaña Fte Administrativa...');
     await this._irAPestana(page, 'Fte Administrativa');
     onProgreso('Abriendo modo edición...');
-    if (!(await this._clickPorIdSufijo(page, '_BtnModEscritura'))) {
-      await this._clickBotonAccion(page, 'Modifica');
-    }
-    await this._esperarModal(page, 'PanelPopEscritura');
+    await this._abrirModalConReintento(
+      page,
+      'PanelPopEscritura',
+      '_BtnModEscritura',
+      'Modifica'
+    );
     await this._cerrarAviso(page);
     onProgreso('Llenando campos de Fuente Administrativa...');
     await this._llenarCamposFuente(page, datos.fuente, extras);
@@ -609,6 +608,25 @@ class MigracionTramiteService {
   }
 
   /**
+   * Abre un modal pulsando su botón y verifica que quedó visible; si no,
+   * reintenta (por id y luego por texto).  Sin esta comprobación se escribía
+   * dentro de un modal cerrado y los datos nunca llegaban a edis.
+   */
+  async _abrirModalConReintento(page, idModal, sufijoBoton, textoBoton) {
+    for (let intento = 1; intento <= 2; intento++) {
+      const pulsado =
+        (await this._clickPorIdSufijo(page, sufijoBoton)) ||
+        (textoBoton ? await this._clickBotonAccion(page, textoBoton) : false);
+      if (pulsado && (await this._esperarModal(page, idModal))) return true;
+      this.logger.warn(`No se abrió ${idModal} (intento ${intento}).`);
+      await this._cerrarAviso(page);
+      await page.waitForTimeout(800);
+    }
+    this.logger.warn(`El modal ${idModal} no se pudo abrir; su sección no se llenará.`);
+    return false;
+  }
+
+  /**
    * Espera a que el modal indicado quede visible (edis los abre por postback).
    * Devuelve true si apareció.
    */
@@ -832,8 +850,14 @@ class MigracionTramiteService {
           const prev = document.querySelector(`[data-robot-campo="${t}"]`);
           if (prev) prev.removeAttribute('data-robot-campo');
 
-          const el = document.querySelector(`[id$="${s}"]`);
-          if (!el) return { encontrado: false };
+          // Se exige que el campo esté VISIBLE: los modales de edis existen en
+          // el DOM aunque estén cerrados, y escribir en uno cerrado no surte
+          // efecto y además lo oculta como si hubiera funcionado.
+          const els = Array.from(document.querySelectorAll(`[id$="${s}"]`));
+          const el = els.find(
+            (e) => e.offsetParent !== null || e.getClientRects().length > 0
+          );
+          if (!el) return { encontrado: false, oculto: els.length > 0 };
           el.setAttribute('data-robot-campo', t);
 
           if (el.tagName === 'SELECT') {
@@ -872,7 +896,10 @@ class MigracionTramiteService {
       info = await this._marcarCampo(page, etiqueta, tag, { indice });
     }
     if (!info.encontrado) {
-      this.logger.warn(`Campo "${etiqueta}"${idSufijo ? ` (${idSufijo})` : ''} no encontrado.`);
+      this.logger.warn(
+        `Campo "${etiqueta}"${idSufijo ? ` (${idSufijo})` : ''} no encontrado` +
+          `${info.oculto ? ' (existe pero está oculto: su modal no se abrió)' : ''}.`
+      );
       return;
     }
 

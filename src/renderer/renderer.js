@@ -1268,8 +1268,60 @@ document.getElementById('lote-guardar').addEventListener('click', async () => {
 const modalMigrar = document.getElementById('modal-migrar');
 const migrarEstado = document.getElementById('migrar-estado');
 
+/**
+ * Los "Datos adicionales" (fuente administrativa, fecha de tenencia, etc.) son
+ * casi siempre los mismos entre trámites, así que se guardan y se recargan
+ * para no tener que escribirlos cada vez. Los radicados NO se guardan.
+ */
+const MIGRAR_CAMPOS_RECORDADOS = [
+  'migrar-destino-eco',
+  'migrar-mat-circulo',
+  'migrar-mat-numero',
+  'migrar-tipo-predio',
+  'migrar-direccion',
+  'migrar-tipo-dir',
+  'migrar-nombre',
+  'migrar-tipo-doc',
+  'migrar-documento',
+  'migrar-porcentaje',
+  'migrar-fecha-tenencia',
+  'migrar-tipo-fuente',
+  'migrar-num-fuente',
+  'migrar-fecha-fuente',
+  'migrar-ente',
+  'migrar-fecha-insc',
+];
+const MIGRAR_CLAVE = 'migrar-datos-adicionales';
+
+function cargarDatosMigracion() {
+  let guardado = {};
+  try {
+    guardado = JSON.parse(localStorage.getItem(MIGRAR_CLAVE) || '{}');
+  } catch {
+    guardado = {};
+  }
+  for (const id of MIGRAR_CAMPOS_RECORDADOS) {
+    const campo = document.getElementById(id);
+    if (campo && guardado[id]) campo.value = guardado[id];
+  }
+}
+
+function guardarDatosMigracion() {
+  const datos = {};
+  for (const id of MIGRAR_CAMPOS_RECORDADOS) {
+    const campo = document.getElementById(id);
+    if (campo && campo.value.trim()) datos[id] = campo.value.trim();
+  }
+  try {
+    localStorage.setItem(MIGRAR_CLAVE, JSON.stringify(datos));
+  } catch {
+    // Sin almacenamiento disponible: no es crítico.
+  }
+}
+
 document.getElementById('btn-migrar-menu').addEventListener('click', () => {
   migrarEstado.textContent = '';
+  cargarDatosMigracion();
   modalMigrar.classList.remove('oculto');
 });
 
@@ -1302,12 +1354,15 @@ document.getElementById('migrar-ejecutar').addEventListener('click', async () =>
     tipoDocumento: document.getElementById('migrar-tipo-doc').value.trim(),
     documento: document.getElementById('migrar-documento').value.trim(),
     porcentaje: document.getElementById('migrar-porcentaje').value.trim(),
+    fechaTenencia: document.getElementById('migrar-fecha-tenencia').value.trim(),
     tipoFuente: document.getElementById('migrar-tipo-fuente').value.trim(),
     numeroFuente: document.getElementById('migrar-num-fuente').value.trim(),
     fechaFuente: document.getElementById('migrar-fecha-fuente').value.trim(),
     enteEmisor: document.getElementById('migrar-ente').value.trim(),
     fechaInscripcion: document.getElementById('migrar-fecha-insc').value.trim(),
   };
+
+  guardarDatosMigracion();
 
   boton.disabled = true;
   migrarEstado.textContent = 'Abriendo edis...';
