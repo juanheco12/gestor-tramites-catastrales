@@ -695,26 +695,52 @@ class MigracionTramiteService {
       return false;
     }
 
-    // Es un <input type="submit">: el clic provoca una navegación completa que
-    // tarda. Se espera la navegación en sí (no networkidle, que resolvía a los
-    // 0,2 s dejando el envío a medias).
+    // La página usa UpdatePanel (Sys.WebForms.PageRequestManager): el botón
+    // dispara un postback ASÍNCRONO, sin navegación.  Esperar navegación era lo
+    // que agotaba los 2 minutos sin que pasara nada.  Se engancha el fin de la
+    // petición para saber cuándo terminó y para ver el error si el servidor
+    // falla (de otro modo el fallo es invisible).
+    await page
+      .evaluate(() => {
+        window.__robotZonas = { fin: 0, error: '' };
+        const S = window.Sys;
+        if (!S || !S.WebForms || !S.WebForms.PageRequestManager) return;
+        if (window.__robotZonasHook) return;
+        window.__robotZonasHook = true;
+        S.WebForms.PageRequestManager.getInstance().add_endRequest((s, e) => {
+          const err = e.get_error && e.get_error();
+          window.__robotZonas.error = err ? String(err.message || err) : '';
+          window.__robotZonas.fin = Date.now();
+          if (err && e.set_errorHandled) e.set_errorHandled(true);
+        });
+      })
+      .catch(() => {});
+
     const inicio = Date.now();
-    await Promise.all([
-      page
-        .waitForNavigation({ waitUntil: 'load', timeout: 120000 })
-        .catch(() => null),
-      boton.click({ timeout: 15000 }).catch((e) => {
-        this.logger.warn(`No se pudo pulsar zonas digitales: ${e.message.split('\n')[0]}`);
-      }),
-    ]);
-    this.logger.info(`Zonas digitales: respuesta en ${Date.now() - inicio} ms.`);
+    await boton.click({ timeout: 15000 }).catch((e) => {
+      this.logger.warn(`No se pudo pulsar zonas digitales: ${e.message.split('\n')[0]}`);
+    });
+
+    const limite = Date.now() + 60000;
+    let estado = await this._leerEstadoTerreno(page);
+    let postback = { fin: 0, error: '' };
+    while (Date.now() < limite) {
+      postback = await page
+        .evaluate(() => window.__robotZonas || { fin: 0, error: '' })
+        .catch(() => postback);
+      estado = await this._leerEstadoTerreno(page);
+      if (estado.filasZonas > 0) break;
+      if (postback.fin) break;
+      await page.waitForTimeout(1000);
+    }
+
+    this.logger.info(
+      `Zonas digitales: ${Date.now() - inicio} ms, postback=${postback.fin ? 'sí' : 'NO'}` +
+        `${postback.error ? `, error="${postback.error}"` : ''}`
+    );
     await this._cerrarAviso(page);
 
-    // Tras el postback la pestaña activa puede volver al inicio.
-    await this._irAPestana(page, 'Terreno').catch(() => {});
-
-    const estado = await this._leerEstadoTerreno(page);
-    await this._guardarDiagnostico(page, 'zonas-digitales');
+    estado = await this._leerEstadoTerreno(page);
     this.logger.info(
       `Terreno tras aplicar zonas: area="${estado.area}" total="${estado.total}" ` +
         `filasZonas=${estado.filasZonas} mensaje="${estado.mensaje}"`
@@ -724,6 +750,7 @@ class MigracionTramiteService {
       this.logger.info('Zonas digitales aplicadas.');
       return true;
     }
+    await this._guardarDiagnostico(page, 'zonas-digitales');
     this.logger.warn('Las zonas no quedaron aplicadas; ver diagnostico/zonas-digitales.');
     return false;
   }
