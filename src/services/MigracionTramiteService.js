@@ -273,12 +273,15 @@ class MigracionTramiteService {
     const campoAnio = page.locator('[data-robot-campo="anio"]');
     const campoNumero = page.locator('[data-robot-campo="numero"]');
     const puestos = {
-      anio: await campoAnio.inputValue(),
-      numero: await campoNumero.inputValue(),
+      anio: await campoAnio.inputValue().catch(() => ''),
+      numero: await campoNumero.inputValue().catch(() => ''),
     };
+    // No es fatal si no se fija: la cuadrícula lista TODOS los asignados y de
+    // ahí se abre el radicado por su enlace de todos modos.
     if (puestos.anio !== partes.anio || puestos.numero !== partes.numero) {
-      throw new Error(
-        `Los datos no quedaron en su campo (AÑO="${puestos.anio}", NÚMERO="${puestos.numero}").`
+      this.logger.warn(
+        `AÑO/NÚMERO no quedaron fijos (AÑO="${puestos.anio}", NÚMERO="${puestos.numero}"); ` +
+          `se continúa y se buscará el radicado en la cuadrícula.`
       );
     }
 
@@ -360,18 +363,25 @@ class MigracionTramiteService {
             .forEach((e) => e.removeAttribute('data-robot-abrir'));
           const norm = (t) => (t || '').replace(/\s+/g, '').trim();
           const objetivo = norm(num);
-          const cands = Array.from(
-            document.querySelectorAll(
-              'a, input[type="submit"], input[type="button"], td, span, font, b'
-            )
-          );
-          for (const el of cands) {
+
+          // 1) Preferir lo que realmente navega: enlaces y botones. El radicado
+          //    en la cuadrícula es un <a>2026-8728</a>.
+          for (const el of document.querySelectorAll(
+            'a, input[type="submit"], input[type="button"]'
+          )) {
             const txt = el.tagName === 'INPUT' ? norm(el.value) : norm(el.textContent);
             if (txt === objetivo) {
-              const click = el.closest('a') || el;
-              click.setAttribute('data-robot-abrir', '1');
+              el.setAttribute('data-robot-abrir', '1');
               return true;
             }
+          }
+          // 2) Respaldo: una celda/span con ese texto; se clica su enlace interno
+          //    si lo tiene.
+          for (const el of document.querySelectorAll('td, span, font, b')) {
+            if (norm(el.textContent) !== objetivo) continue;
+            const enlace = el.querySelector('a') || el;
+            enlace.setAttribute('data-robot-abrir', '1');
+            return true;
           }
           return false;
         }, num)
