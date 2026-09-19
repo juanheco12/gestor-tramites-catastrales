@@ -195,9 +195,7 @@ class MigracionTramiteService {
     onProgreso('Navegando a pestaña Predio...');
     await this._irAPestana(page, 'Predio');
     onProgreso('Abriendo modo edición (Modifica)...');
-    if (!(await this._clickPorIdSufijo(page, '_BtnModPredio'))) {
-      await this._clickBotonAccion(page, 'Modifica');
-    }
+    await this._entrarModoEdicion(page, '_BtnModPredio', '_CmbDestino');
     onProgreso('Llenando campos de Predio...');
     await this._llenarCamposPredio(page, datos.predio, extras);
     onProgreso('Guardando Predio...');
@@ -229,9 +227,9 @@ class MigracionTramiteService {
     await this._irAPestana(page, 'Fte Administrativa');
     onProgreso('Abriendo modo edición...');
     if (!(await this._clickPorIdSufijo(page, '_BtnModEscritura'))) {
-      const fteOk = await this._clickBotonAccion(page, 'Modifica');
-      if (!fteOk) await this._clickBotonAgregar(page);
+      await this._clickBotonAccion(page, 'Modifica');
     }
+    await this._cerrarAviso(page);
     onProgreso('Llenando campos de Fuente Administrativa...');
     await this._llenarCamposFuente(page, datos.fuente, extras);
     onProgreso('Guardando Fuente Administrativa...');
@@ -421,6 +419,50 @@ class MigracionTramiteService {
       }
     }
     this.logger.warn(`Botón *${sufijo} no encontrado/clicable.`);
+    return false;
+  }
+
+  /**
+   * Pulsa el botón de edición ("Modifica") y COMPRUEBA que los campos de la
+   * sección quedaron habilitados, usando un campo testigo.  edis hace postback
+   * al pulsar, así que se sondea hasta que el testigo deje de estar disabled.
+   * Devuelve true si quedó en modo edición.
+   */
+  async _entrarModoEdicion(page, sufijoBoton, sufijoTestigo) {
+    const habilitado = () =>
+      page
+        .evaluate((s) => {
+          const el = document.querySelector(`[id$="${s}"]`);
+          return Boolean(el && !el.disabled);
+        }, sufijoTestigo)
+        .catch(() => false);
+
+    if (await habilitado()) {
+      this.logger.info(`La sección ya estaba en modo edición (${sufijoTestigo}).`);
+      return true;
+    }
+
+    for (let intento = 1; intento <= 2; intento++) {
+      const pulsado = await this._clickPorIdSufijo(page, sufijoBoton);
+      await this._cerrarAviso(page);
+      if (!pulsado && intento === 2) break;
+
+      const fin = Date.now() + 8000;
+      while (Date.now() < fin) {
+        if (await habilitado()) {
+          this.logger.info(`Modo edición activo tras pulsar *${sufijoBoton}.`);
+          return true;
+        }
+        await page.waitForTimeout(500);
+      }
+      this.logger.warn(
+        `*${sufijoBoton} no habilitó ${sufijoTestigo} (intento ${intento}).`
+      );
+    }
+
+    this.logger.warn(
+      `No se logró el modo edición con *${sufijoBoton}; se escribirá forzando los campos.`
+    );
     return false;
   }
 
@@ -668,16 +710,77 @@ class MigracionTramiteService {
     );
   }
 
-  async _llenarInput(page, etiqueta, valor, { indice = 0 } = {}) {
+  /**
+   * Marca un campo por el SUFIJO de su id.  Es la vía preferida: los ids de
+   * edis son estables (p. ej. "_CmbDestino", "_TMatricula") mientras que las
+   * etiquetas dependen del armado de la tabla.
+   */
+  async _marcarPorId(page, sufijo, tag) {
+    return page
+      .evaluate(
+        ({ s, t }) => {
+          const prev = document.querySelector(`[data-robot-campo="${t}"]`);
+          if (prev) prev.removeAttribute('data-robot-campo');
+
+          const el = document.querySelector(`[id$="${s}"]`);
+          if (!el) return { encontrado: false };
+          el.setAttribute('data-robot-campo', t);
+
+          if (el.tagName === 'SELECT') {
+            const normalizar = (x) =>
+              (x || '')
+                .normalize('NFD')
+                .replace(/[̀-ͯ]/g, '')
+                .toUpperCase()
+                .replace(/\s+/g, ' ')
+                .trim();
+            return {
+              encontrado: true,
+              tipo: 'select',
+              id: el.id || '',
+              opciones: Array.from(el.options).map((o) => ({
+                value: o.value,
+                text: o.text.trim(),
+                textNorm: normalizar(o.text),
+              })),
+            };
+          }
+          return { encontrado: true, tipo: 'input', id: el.id || '' };
+        },
+        { s: sufijo, t: tag }
+      )
+      .catch(() => ({ encontrado: false }));
+  }
+
+  async _llenarInput(page, etiqueta, valor, { indice = 0, idSufijo = null } = {}) {
     if (!valor) return;
     const tag = `migrar-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const info = await this._marcarCampo(page, etiqueta, tag, { indice });
+
+    // Primero por id (estable); si no está, se cae a la búsqueda por etiqueta.
+    let info = idSufijo ? await this._marcarPorId(page, idSufijo, tag) : null;
+    if (!info || !info.encontrado) {
+      info = await this._marcarCampo(page, etiqueta, tag, { indice });
+    }
     if (!info.encontrado) {
-      this.logger.warn(`Campo "${etiqueta}" no encontrado.`);
+      this.logger.warn(`Campo "${etiqueta}"${idSufijo ? ` (${idSufijo})` : ''} no encontrado.`);
       return;
     }
 
     const locator = page.locator(`[data-robot-campo="${tag}"]`);
+
+    // edis deja los campos deshabilitados hasta pulsar "Modifica". Si el botón
+    // no los habilitó, se quita el disabled para poder escribir igualmente: al
+    // guardar, el valor sí se envía porque el control ya no va deshabilitado.
+    await page
+      .evaluate((t) => {
+        const el = document.querySelector(`[data-robot-campo="${t}"]`);
+        if (!el) return;
+        el.removeAttribute('disabled');
+        el.removeAttribute('readonly');
+        el.disabled = false;
+        if ('readOnly' in el) el.readOnly = false;
+      }, tag)
+      .catch(() => {});
 
     if (info.tipo === 'select') {
       const norm = (t) =>
@@ -709,13 +812,48 @@ class MigracionTramiteService {
         return;
       }
 
-      await locator.selectOption(mejor.value);
+      const puesto = await locator
+        .selectOption(mejor.value, { timeout: 8000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!puesto) {
+        // Respaldo: fijar el valor por JS y avisar del cambio, por si el
+        // control sigue bloqueado para la interacción normal.
+        await page
+          .evaluate(
+            ({ t, v }) => {
+              const el = document.querySelector(`[data-robot-campo="${t}"]`);
+              if (!el) return;
+              el.value = v;
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            },
+            { t: tag, v: mejor.value }
+          )
+          .catch(() => {});
+      }
       await page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
       await page.waitForTimeout(500);
-      this.logger.info(`Select "${etiqueta}" = "${mejor.text}"`);
+      this.logger.info(`Select "${etiqueta}" = "${mejor.text}"${puesto ? '' : ' (por JS)'}`);
     } else {
-      await locator.fill(String(valor));
-      this.logger.info(`Input "${etiqueta}" = "${valor}"`);
+      const puesto = await locator
+        .fill(String(valor), { timeout: 8000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!puesto) {
+        await page
+          .evaluate(
+            ({ t, v }) => {
+              const el = document.querySelector(`[data-robot-campo="${t}"]`);
+              if (!el) return;
+              el.value = v;
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            },
+            { t: tag, v: String(valor) }
+          )
+          .catch(() => {});
+      }
+      this.logger.info(`Input "${etiqueta}" = "${valor}"${puesto ? '' : ' (por JS)'}`);
     }
   }
 
@@ -724,24 +862,30 @@ class MigracionTramiteService {
   async _llenarCamposPredio(page, datosOrigen, extras) {
     const buscar = this._crearBuscador(datosOrigen);
 
-    await this._llenarInput(page, 'Destino', extras.destino || buscar('DESTINO'));
+    await this._llenarInput(page, 'Destino', extras.destino || buscar('DESTINO'), {
+      idSufijo: '_CmbDestino',
+    });
 
+    // La matrícula va partida en dos campos: ORIP (círculo, p. ej. 140) y el
+    // número (p. ej. 152992).
     const matriculaRaw = extras.matriculaNumero || buscar('MATRICULA');
-    if (extras.matriculaCirculo) {
-      await this._llenarInput(page, 'Matricula', extras.matriculaCirculo, { indice: 0 });
-      await this._llenarInput(page, 'Matricula', matriculaRaw, { indice: 1 });
-    } else if (matriculaRaw && matriculaRaw.includes('-')) {
-      const [circulo, numero] = matriculaRaw.split('-', 2);
-      await this._llenarInput(page, 'Matricula', circulo, { indice: 0 });
-      await this._llenarInput(page, 'Matricula', numero, { indice: 1 });
-    } else if (matriculaRaw) {
-      await this._llenarInput(page, 'Matricula', matriculaRaw);
+    let circulo = extras.matriculaCirculo || '';
+    let numero = matriculaRaw || '';
+    if (!circulo && matriculaRaw && matriculaRaw.includes('-')) {
+      [circulo, numero] = matriculaRaw.split('-', 2);
+    }
+    if (circulo) {
+      await this._llenarInput(page, 'Matricula', circulo, { idSufijo: '_TCodigoORIP' });
+    }
+    if (numero) {
+      await this._llenarInput(page, 'Matricula', numero, { idSufijo: '_TMatricula' });
     }
 
     await this._llenarInput(
       page,
       'Tipo Predio',
-      extras.tipoPredio || buscar('TIPO PREDIO', 'TIPO DE PREDIO')
+      extras.tipoPredio || buscar('TIPO PREDIO', 'TIPO DE PREDIO'),
+      { idSufijo: '_CmbTipoPredio' }
     );
   }
 
