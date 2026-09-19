@@ -211,14 +211,18 @@ class MigracionTramiteService {
   }
 
   /**
-   * En el destino la vía va como "C", no "CL": se quita la L del prefijo para
-   * que la dirección no pase con ese error.  Solo afecta al prefijo, no a los
-   * "5C" que puedan venir dentro de la dirección.
+   * La dirección pasa al destino "limpia": la vía va como "C" (no "CL") y sin
+   * el guion separador.  Ej.: "CL 129 5C - 36" -> "C 129 5C 36".  El prefijo
+   * es lo único que cambia de letra: los "5C" internos quedan intactos.
    */
   _normalizarDireccion(direccion) {
     const limpia = String(direccion || '').trim();
     if (!limpia) return '';
-    const ajustada = limpia.replace(/^CL\b\s*/i, 'C ');
+    const ajustada = limpia
+      .replace(/^CL\b\s*/i, 'C ')
+      .replace(/-/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
     if (ajustada !== limpia) {
       this.logger.info(`Dirección ajustada: "${limpia}" -> "${ajustada}"`);
     }
