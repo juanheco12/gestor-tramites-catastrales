@@ -686,8 +686,23 @@ class MigracionTramiteService {
   async _aplicarZonasDigitales(page) {
     // Comprobar que el área sigue escrita justo antes de pulsar: si un postback
     // anterior la borró, aplicar zonas no haría nada y quedaría sin explicación.
-    const antes = await this._leerPorIds(page, { area: '_TAreaTTPrivada' });
-    this.logger.info(`Área de terreno antes de aplicar zonas: "${antes.area}"`);
+    // Si edis vuelve a deshabilitar el campo, su valor NO viaja en el envío y
+    // el servidor recibiría 0: por eso se deja constancia del estado exacto.
+    const antes = await page
+      .evaluate(() => {
+        const el = document.querySelector('[id$="_TAreaTTPrivada"]');
+        if (!el) return { area: '', disabled: null, nombre: '' };
+        return {
+          area: el.value,
+          disabled: el.disabled,
+          nombre: el.getAttribute('name') || '',
+        };
+      })
+      .catch(() => ({ area: '', disabled: null, nombre: '' }));
+    this.logger.info(
+      `Área antes de aplicar zonas: "${antes.area}" disabled=${antes.disabled} ` +
+        `name="${antes.nombre}"`
+    );
 
     const boton = page.locator('[id$="_BtnGetZonasD"]').first();
     if (!(await boton.isVisible({ timeout: 8000 }).catch(() => false))) {
@@ -716,12 +731,30 @@ class MigracionTramiteService {
       })
       .catch(() => {});
 
+    // Capturar la RESPUESTA del postback asíncrono: es la única forma de ver
+    // qué contesta edis cuando no aplica las zonas y no muestra aviso.
+    const respuestas = [];
+    const onResponse = async (res) => {
+      try {
+        if (res.request().method() !== 'POST') return;
+        const cuerpo = await res.text();
+        if (cuerpo && /zona/i.test(cuerpo)) respuestas.push(cuerpo);
+      } catch {
+        // Respuesta no legible; se ignora.
+      }
+    };
+    page.on('response', onResponse);
+
     const inicio = Date.now();
     await boton.click({ timeout: 15000 }).catch((e) => {
       this.logger.warn(`No se pudo pulsar zonas digitales: ${e.message.split('\n')[0]}`);
     });
 
-    const limite = Date.now() + 60000;
+    // El cálculo tarda unos segundos: se espera un mínimo antes de dar por
+    // terminado, porque el primer endRequest puede ser de otro postback.
+    await page.waitForTimeout(5000);
+
+    const limite = Date.now() + 40000;
     let estado = await this._leerEstadoTerreno(page);
     let postback = { fin: 0, error: '' };
     while (Date.now() < limite) {
@@ -730,14 +763,19 @@ class MigracionTramiteService {
         .catch(() => postback);
       estado = await this._leerEstadoTerreno(page);
       if (estado.filasZonas > 0) break;
-      if (postback.fin) break;
       await page.waitForTimeout(1000);
     }
+    page.off('response', onResponse);
 
     this.logger.info(
       `Zonas digitales: ${Date.now() - inicio} ms, postback=${postback.fin ? 'sí' : 'NO'}` +
         `${postback.error ? `, error="${postback.error}"` : ''}`
     );
+    for (const cuerpo of respuestas.slice(-2)) {
+      const limpio = cuerpo.replace(/\s+/g, ' ');
+      const zona = limpio.match(/.{0,120}zona.{0,200}/i);
+      this.logger.info(`Respuesta de edis (zonas): ${zona ? zona[0] : limpio.slice(0, 300)}`);
+    }
     await this._cerrarAviso(page);
 
     estado = await this._leerEstadoTerreno(page);
