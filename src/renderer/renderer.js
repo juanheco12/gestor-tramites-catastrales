@@ -1293,6 +1293,20 @@ const MIGRAR_CAMPOS_RECORDADOS = [
 ];
 const MIGRAR_CLAVE = 'migrar-datos-adicionales';
 
+/**
+ * Escritura que hoy se repite en todos los trámites. Vienen puestos de fábrica
+ * para no escribirlos cada vez; los campos siguen siendo editables y lo que se
+ * escriba manda sobre esto.
+ */
+const MIGRAR_VALORES_FIJOS = {
+  'migrar-fecha-tenencia': '06/10/2022',
+  'migrar-tipo-fuente': 'Escritura Publica',
+  'migrar-num-fuente': '2943',
+  'migrar-fecha-fuente': '09/09/2022',
+  'migrar-ente': 'Notaria Segunda De Monteria',
+  'migrar-fecha-insc': '10/09/2026',
+};
+
 function cargarDatosMigracion() {
   let guardado = {};
   try {
@@ -1302,7 +1316,9 @@ function cargarDatosMigracion() {
   }
   for (const id of MIGRAR_CAMPOS_RECORDADOS) {
     const campo = document.getElementById(id);
-    if (campo && guardado[id]) campo.value = guardado[id];
+    if (!campo) continue;
+    const valor = guardado[id] || MIGRAR_VALORES_FIJOS[id] || '';
+    if (valor) campo.value = valor;
   }
 }
 

@@ -184,7 +184,12 @@ class MigracionTramiteService {
     });
     campos.cedula = solicitante.cedula;
     campos.nombre = solicitante.nombre;
-    campos.direccion = await this._leerDireccionOrigen(page);
+    campos.direccion = this._normalizarDireccion(await this._leerDireccionOrigen(page));
+
+    onProgreso('Leyendo pestaña Terreno...');
+    await this._irAPestana(page, 'Terreno');
+    const terreno = await this._leerPorIds(page, { areaPrivada: '_TAreaTTPrivada' });
+    campos.areaTerreno = terreno.areaPrivada;
 
     onProgreso('Leyendo pestaña Propietarios...');
     await this._irAPestana(page, 'Propietarios');
@@ -198,10 +203,26 @@ class MigracionTramiteService {
 
     this.logger.info(
       `Origen ${radicado}: destino="${campos.destino}" matricula="${campos.orip}-${campos.matricula}" ` +
-        `direccion="${campos.direccion}" cedula="${campos.cedula}" nombre="${campos.nombre}"`
+        `direccion="${campos.direccion}" area="${campos.areaTerreno}" ` +
+        `cedula="${campos.cedula}" nombre="${campos.nombre}"`
     );
 
     return { predio, propietarios, fuente, campos };
+  }
+
+  /**
+   * En el destino la vía va como "C", no "CL": se quita la L del prefijo para
+   * que la dirección no pase con ese error.  Solo afecta al prefijo, no a los
+   * "5C" que puedan venir dentro de la dirección.
+   */
+  _normalizarDireccion(direccion) {
+    const limpia = String(direccion || '').trim();
+    if (!limpia) return '';
+    const ajustada = limpia.replace(/^CL\b\s*/i, 'C ');
+    if (ajustada !== limpia) {
+      this.logger.info(`Dirección ajustada: "${limpia}" -> "${ajustada}"`);
+    }
+    return ajustada;
   }
 
   /** Lee varios campos por sufijo de id. Devuelve {clave: valor}. */
@@ -311,6 +332,23 @@ class MigracionTramiteService {
       await this._cerrarModalAbierto(page);
     } else {
       this.logger.warn('No se pudo abrir el formulario de Propietario (+).');
+    }
+
+    /* --- Terreno: se copia el área del origen y se aplican zonas digitales.
+       El botón tarda bastante (carga del servidor) y al terminar edis avisa
+       "zona aplicada". --- */
+    const areaTerreno = extras.areaTerreno || campos.areaTerreno || '';
+    if (areaTerreno) {
+      onProgreso('Navegando a pestaña Terreno...');
+      await this._irAPestana(page, 'Terreno');
+      onProgreso(`Copiando área de terreno (${areaTerreno})...`);
+      await this._llenarInput(page, 'Area Terreno Privado', areaTerreno, {
+        idSufijo: '_TAreaTTPrivada',
+      });
+      onProgreso('Aplicando zonas digitales (puede tardar)...');
+      await this._aplicarZonasDigitales(page, onProgreso);
+    } else {
+      this.logger.warn('Sin área de terreno del origen: se omite el paso de Terreno.');
     }
 
     /* --- Fte Administrativa (datos SIEMPRE de los predeterminados/extras) --- */
@@ -604,6 +642,42 @@ class MigracionTramiteService {
       }
     }
     this.logger.warn(`Botón "${texto}" no encontrado.`);
+    return false;
+  }
+
+  /**
+   * Pulsa "Aplica Zonas Digitales" y espera a que termine.  El proceso tarda
+   * (edis recalcula contra la cartografía), así que se sondea hasta 3 minutos
+   * a que aparezcan zonas o el aviso de fin, en vez de una espera fija.
+   */
+  async _aplicarZonasDigitales(page, onProgreso = () => {}) {
+    if (!(await this._clickPorIdSufijo(page, '_BtnGetZonasD', { timeout: 15000 }))) {
+      this.logger.warn('No se encontró el botón "Aplica Zonas Digitales".');
+      return false;
+    }
+
+    const limite = Date.now() + 180000;
+    while (Date.now() < limite) {
+      const aviso = await this._cerrarAviso(page);
+      if (/APLICAD|ZONA/i.test(aviso || '')) {
+        this.logger.info('Zonas digitales aplicadas (aviso de edis).');
+        return true;
+      }
+      // También se da por bueno cuando la suma de áreas deja de estar en cero.
+      const total = await page
+        .evaluate(() => {
+          const el = document.querySelector('[id$="_LblAreaTotalTerreno"]');
+          return el ? (el.textContent || '').trim() : '';
+        })
+        .catch(() => '');
+      if (total && parseFloat(String(total).replace(',', '.')) > 0) {
+        this.logger.info(`Zonas digitales aplicadas (área total ${total}).`);
+        return true;
+      }
+      onProgreso('Aplicando zonas digitales (puede tardar)...');
+      await page.waitForTimeout(3000);
+    }
+    this.logger.warn('Se agotó la espera de "Aplica Zonas Digitales".');
     return false;
   }
 
