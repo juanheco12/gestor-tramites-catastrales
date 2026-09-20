@@ -213,6 +213,7 @@ class MigracionTramiteService {
     onProgreso('Leyendo pestaña Propietarios...');
     await this._irAPestana(page, 'Propietarios');
     const propietarios = await this._leerCamposVisibles(page);
+    campos.propietarios = await this._leerPropietariosOrigen(page);
 
     // La Fte Administrativa del origen (cancelación) viene vacía: esos datos
     // salen siempre de los predeterminados que indica el usuario.
@@ -269,6 +270,54 @@ class MigracionTramiteService {
         return salida;
       }, mapa)
       .catch(() => Object.fromEntries(Object.keys(mapa).map((k) => [k, ''])));
+  }
+
+  /**
+   * Propietarios del origen: filas de la grilla PROPIETARIOS (NOMBRE, TIPO
+   * DOCUMENTO, DOCUMENTO, Porc).  Puede venir vacía —en las cancelaciones lo
+   * está—, y entonces el dueño se toma del solicitante del trámite.
+   * @returns {Promise<Array<{nombre, tipoDocumento, documento, porcentaje}>>}
+   */
+  async _leerPropietariosOrigen(page) {
+    return page
+      .evaluate(() => {
+        const norm = (t) =>
+          (t || '')
+            .normalize('NFD')
+            .replace(/[̀-ͯ]/g, '')
+            .toUpperCase()
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        for (const tabla of document.querySelectorAll('table')) {
+          const filas = Array.from(tabla.querySelectorAll('tr'));
+          if (filas.length < 2) continue;
+          const cab = Array.from(filas[0].children).map((c) => norm(c.textContent));
+          const iNombre = cab.indexOf('NOMBRE');
+          const iDoc = cab.indexOf('DOCUMENTO');
+          if (iNombre < 0 || iDoc < 0) continue;
+          const iTipo = cab.indexOf('TIPO DOCUMENTO');
+          const iPorc = cab.findIndex((c) => c.startsWith('PORC'));
+
+          const texto = (fila, i) =>
+            i >= 0 && fila.children[i] ? (fila.children[i].textContent || '').trim() : '';
+
+          const salida = [];
+          for (const fila of filas.slice(1)) {
+            const nombre = texto(fila, iNombre);
+            if (!nombre) continue;
+            salida.push({
+              nombre,
+              tipoDocumento: texto(fila, iTipo),
+              documento: texto(fila, iDoc),
+              porcentaje: texto(fila, iPorc),
+            });
+          }
+          return salida;
+        }
+        return [];
+      })
+      .catch(() => []);
   }
 
   /**
@@ -344,21 +393,32 @@ class MigracionTramiteService {
       }
     }
 
-    /* --- Propietarios --- */
+    /* --- Propietarios: se pasan TODOS los del origen.  Si su grilla viene
+       vacía (caso de las cancelaciones) se crea uno con el solicitante. --- */
     onProgreso('Navegando a pestaña Propietarios...');
     await this._irAPestana(page, 'Propietarios');
-    onProgreso('Agregando nuevo propietario...');
-    if (await this._abrirModalConReintento(page, 'PanelPopPropietario', '_BtnAgregaProp')) {
-      onProgreso('Llenando campos de Propietario...');
-      await this._llenarCamposPropietarios(page, datos.propietarios, extras, campos);
-      onProgreso('Guardando Propietario...');
+
+    const delOrigen = Array.isArray(campos.propietarios) ? campos.propietarios : [];
+    const aCrear = delOrigen.length > 0 ? delOrigen : [null];
+    this.logger.info(
+      `Propietarios a crear: ${aCrear.length}` +
+        (delOrigen.length > 0 ? ' (de la grilla del origen)' : ' (del solicitante)')
+    );
+
+    for (let i = 0; i < aCrear.length; i++) {
+      onProgreso(`Agregando propietario ${i + 1} de ${aCrear.length}...`);
+      if (!(await this._abrirModalConReintento(page, 'PanelPopPropietario', '_BtnAgregaProp'))) {
+        avisos.push(`No se pudo abrir el formulario del propietario ${i + 1}.`);
+        break;
+      }
+      await this._llenarCamposPropietarios(page, datos.propietarios, extras, campos, aCrear[i]);
+      onProgreso(`Guardando propietario ${i + 1}...`);
       if (!(await this._clickPorIdSufijo(page, '_BtnGuardaProp'))) {
         await this._clickBotonAccion(page, 'Guardar');
       }
-      await this._cerrarAviso(page);
+      const aviso = await this._cerrarAviso(page);
+      if (aviso && /error/i.test(aviso)) avisos.push(`Propietario ${i + 1}: ${aviso}`);
       await this._cerrarModalAbierto(page);
-    } else {
-      this.logger.warn('No se pudo abrir el formulario de Propietario (+).');
     }
 
     /* --- Terreno: se copia el área del origen y se aplican zonas digitales.
@@ -582,7 +642,16 @@ class MigracionTramiteService {
    * el sufijo "_BtnModPredio" lo identifica sin ambigüedad). Busca en todos los
    * marcos y solo pulsa el que esté visible.  Devuelve true si pulsó alguno.
    */
-  async _clickPorIdSufijo(page, sufijo, { timeout = 8000 } = {}) {
+  async _clickPorIdSufijo(page, sufijo, { timeout = 8000, espera = 5000 } = {}) {
+    // Se espera a que aparezca visible en vez de descartarlo al instante: tras
+    // un postback el panel puede tardar en mostrarse y el botón existía pero
+    // todavía no era visible.
+    await page
+      .locator(`[id$="${sufijo}"]`)
+      .first()
+      .waitFor({ state: 'visible', timeout: espera })
+      .catch(() => {});
+
     for (const frame of page.frames()) {
       const candidatos = frame.locator(`[id$="${sufijo}"]`);
       const total = await candidatos.count().catch(() => 0);
@@ -652,18 +721,43 @@ class MigracionTramiteService {
       if (!info.encontrado) continue;
 
       const tab = frame.locator('[data-robot-pestana="1"]');
-      await tab.click({ timeout: 8000 }).catch(async () => {
-        // Respaldo: disparar el postback directamente si el click no navega.
-        await frame.evaluate(() => {
-          const el = document.querySelector('[data-robot-pestana="1"]');
-          if (el) el.click();
+      // Se COMPRUEBA que la pestaña quedó activa: un clic tras un postback
+      // puede perderse y el panel seguir oculto, con lo que sus botones
+      // "no existen" aunque estén en la página.
+      for (let intento = 1; intento <= 3; intento++) {
+        await tab.click({ timeout: 8000 }).catch(async () => {
+          await frame.evaluate(() => {
+            const el = document.querySelector('[data-robot-pestana="1"]');
+            if (el) el.click();
+          });
         });
-      });
-      await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
-      await page.waitForTimeout(2000);
-      this.logger.info(
-        `Pestaña "${nombre}" activa (${info.tag}, texto="${info.texto}", href="${info.href}").`
-      );
+        await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
+
+        const fin = Date.now() + 6000;
+        while (Date.now() < fin) {
+          const activa = await frame
+            .evaluate(() => {
+              const el = document.querySelector('[data-robot-pestana="1"]');
+              if (!el) return false;
+              for (let n = el, i = 0; n && i < 4; n = n.parentElement, i++) {
+                if ((n.className || '').toString().includes('ajax__tab_active')) return true;
+              }
+              return false;
+            })
+            .catch(() => false);
+          if (activa) {
+            await page.waitForTimeout(800);
+            this.logger.info(`Pestaña "${nombre}" activa (${info.tag}, texto="${info.texto}").`);
+            return;
+          }
+          await page.waitForTimeout(400);
+        }
+        this.logger.warn(`La pestaña "${nombre}" no quedó activa (intento ${intento}).`);
+      }
+      // No se pudo confirmar, pero se sigue: puede ser una pestaña sin la
+      // marca de activa del toolkit.
+      await page.waitForTimeout(1500);
+      this.logger.warn(`Se continúa sin confirmar la pestaña "${nombre}".`);
       return;
     }
 
@@ -1278,20 +1372,26 @@ class MigracionTramiteService {
   }
 
   /** Campos del modal PROPIETARIO (PanelPopPropietario), por id real. */
-  async _llenarCamposPropietarios(page, datosOrigen, extras, campos = {}) {
+  /**
+   * @param {object|null} propietario Fila de la grilla del origen; si es null
+   *   se usa el solicitante del trámite (caso de las cancelaciones).
+   */
+  async _llenarCamposPropietarios(page, datosOrigen, extras, campos = {}, propietario = null) {
     const buscar = this._crearBuscador(datosOrigen);
+    const p = propietario || {};
 
     await this._llenarInput(
       page,
       'Tipo Dcto',
-      extras.tipoDocumento || buscar('TIPO DOC', 'TIPO DCTO'),
+      p.tipoDocumento || extras.tipoDocumento || buscar('TIPO DOC', 'TIPO DCTO'),
       { idSufijo: '_CmbTipoDoc' }
     );
-    // El número de documento sale de la cédula del solicitante del trámite.
+    // Sin propietario en el origen, el documento sale de la cédula del
+    // solicitante del trámite.
     await this._llenarInput(
       page,
       'Documento',
-      extras.documento || campos.cedula || buscar('DOCUMENTO', 'CEDULA'),
+      p.documento || extras.documento || campos.cedula || buscar('DOCUMENTO', 'CEDULA'),
       { idSufijo: '_TDcto' }
     );
     await this._llenarInput(page, 'Tipo Derecho', extras.tipoDerecho || 'Dominio', {
@@ -1300,7 +1400,7 @@ class MigracionTramiteService {
     await this._llenarInput(
       page,
       'Fraccion de Derecho',
-      extras.porcentaje || buscar('PORCENTAJE', 'FRACCION') || '1',
+      p.porcentaje || extras.porcentaje || buscar('PORCENTAJE', 'FRACCION') || '1',
       { idSufijo: '_TPorcProp' }
     );
 
@@ -1316,7 +1416,7 @@ class MigracionTramiteService {
       idSufijo: '_CmbGrupoEtnico',
     });
 
-    const nombreCompleto = extras.nombre || campos.nombre || buscar('NOMBRE');
+    const nombreCompleto = p.nombre || extras.nombre || campos.nombre || buscar('NOMBRE');
     if (nombreCompleto) {
       const n = this._separarNombre(nombreCompleto);
       await this._llenarInput(page, '1er Nombre', n.primerNombre, { idSufijo: '_TNombre1' });
