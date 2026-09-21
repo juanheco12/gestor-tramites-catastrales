@@ -1088,6 +1088,28 @@ class MigracionTramiteService {
    * se pierde TODO lo escrito (es lo que pasaba con la escritura: los campos
    * quedaban llenos y el guardado nunca llegaba a ejecutarse).
    */
+  /**
+   * Espera a que no quede ningún postback asíncrono en curso.  La página usa
+   * UpdatePanel: si se escribe mientras uno está en vuelo, el formulario se
+   * redibuja encima y lo escrito se pierde.
+   */
+  async _esperarPostbackTerminado(page, limiteMs = 12000) {
+    const fin = Date.now() + limiteMs;
+    while (Date.now() < fin) {
+      const enCurso = await page
+        .evaluate(() => {
+          const S = window.Sys;
+          if (!S || !S.WebForms || !S.WebForms.PageRequestManager) return false;
+          return S.WebForms.PageRequestManager.getInstance().get_isInAsyncPostBack();
+        })
+        .catch(() => false);
+      if (!enCurso) return true;
+      await page.waitForTimeout(300);
+    }
+    this.logger.warn('Un postback asíncrono seguía en curso tras la espera.');
+    return false;
+  }
+
   async _guardarConRespaldo(page, sufijo, texto = 'Guardar') {
     if (await this._clickPorIdSufijo(page, sufijo)) return true;
     if (await this._clickBotonAccion(page, texto)) return true;
@@ -1588,6 +1610,7 @@ class MigracionTramiteService {
     const [tipo, ...resto] = campos;
     await this._llenarInput(page, tipo[0], tipo[1], { idSufijo: tipo[2] });
     await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+    await this._esperarPostbackTerminado(page);
     await page.waitForTimeout(1200);
 
     // Cada campo se escribe y se comprueba en el acto, reintentando el suyo:
@@ -1603,18 +1626,36 @@ class MigracionTramiteService {
       }
     }
 
-    // Foto final de lo que realmente quedó en el formulario.
+    // Pasada final: no basta con MIRAR si quedó algo vacío, hay que volver a
+    // llenarlo. El postback del tipo de fuente puede redibujar el formulario
+    // después de escribir, y entonces se guardaba solo el tipo.
     const lectura = {};
     for (const [, , idSufijo] of campos) lectura[idSufijo] = idSufijo;
-    const puestos = await this._leerPorIds(page, lectura);
-    const vacios = campos
-      .filter(([, valor, idSufijo]) => valor && !String(puestos[idSufijo] || '').trim())
-      .map(([etiqueta]) => etiqueta);
+
+    let puestos = {};
+    let vacios = [];
+    for (let ronda = 1; ronda <= 3; ronda++) {
+      puestos = await this._leerPorIds(page, lectura);
+      vacios = campos.filter(
+        ([, valor, idSufijo]) => valor && !String(puestos[idSufijo] || '').trim()
+      );
+      if (vacios.length === 0) break;
+
+      this.logger.warn(
+        `Fuente: se perdieron ${vacios.map((c) => c[0]).join(', ')}; ` +
+          `se vuelven a llenar (ronda ${ronda}).`
+      );
+      for (const [etiqueta, valor, idSufijo] of vacios) {
+        await this._llenarInput(page, etiqueta, valor, { idSufijo });
+      }
+      await page.waitForTimeout(800);
+    }
+
     this.logger.info(
       `Fuente administrativa antes de guardar: ` +
         campos.map(([e, , id]) => `${e}="${puestos[id] || ''}"`).join(', ')
     );
-    return vacios;
+    return vacios.map(([etiqueta]) => etiqueta);
   }
 
   /* ===================== UTILIDADES ===================== */
