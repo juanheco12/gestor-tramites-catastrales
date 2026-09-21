@@ -411,8 +411,8 @@ class MigracionTramiteService {
     this.logger.info(`Fuente al guardar: ${JSON.stringify(estado)}`);
 
     onProgreso('Guardando Fuente Administrativa...');
-    if (!(await this._clickPorIdSufijo(page, '_BtnGuardaEscritura'))) {
-      await this._clickBotonAccion(page, 'Guardar');
+    if (!(await this._guardarConRespaldo(page, '_BtnGuardaEscritura'))) {
+      avisos.push('No se pudo guardar la fuente administrativa.');
     }
     const aviso = await this._cerrarAviso(page);
     if (aviso && /error/i.test(aviso)) avisos.push(`Fuente administrativa: ${aviso}`);
@@ -453,9 +453,7 @@ class MigracionTramiteService {
     onProgreso('Llenando campos de Predio...');
     await this._llenarCamposPredio(page, campos, extras);
     onProgreso('Guardando Predio...');
-    if (!(await this._clickPorIdSufijo(page, '_BtnGuardaPred'))) {
-      await this._clickBotonAccion(page, 'Guardar');
-    }
+    await this._guardarConRespaldo(page, '_BtnGuardaPred');
     await this._cerrarAviso(page);
     await this._cerrarModalAbierto(page);
 
@@ -471,9 +469,7 @@ class MigracionTramiteService {
         await this._llenarInput(page, 'Complemento direccion', direccion, {
           idSufijo: '_TComplementoDir',
         });
-        if (!(await this._clickPorIdSufijo(page, '_BtnGuardaDir'))) {
-          await this._clickBotonAccion(page, 'Guardar');
-        }
+        await this._guardarConRespaldo(page, '_BtnGuardaDir');
         await this._cerrarAviso(page);
         await this._cerrarModalAbierto(page);
       }
@@ -499,9 +495,7 @@ class MigracionTramiteService {
       }
       await this._llenarCamposPropietarios(page, datos.propietarios, extras, campos, aCrear[i]);
       onProgreso(`Guardando propietario ${i + 1}...`);
-      if (!(await this._clickPorIdSufijo(page, '_BtnGuardaProp'))) {
-        await this._clickBotonAccion(page, 'Guardar');
-      }
+      await this._guardarConRespaldo(page, '_BtnGuardaProp');
       const aviso = await this._cerrarAviso(page);
       if (aviso && /error/i.test(aviso)) avisos.push(`Propietario ${i + 1}: ${aviso}`);
       await this._cerrarModalAbierto(page);
@@ -1086,6 +1080,35 @@ class MigracionTramiteService {
     }
     this.logger.warn(`El modal ${idParcial} no apareció.`);
     return false;
+  }
+
+  /**
+   * Pulsa un botón de guardar con respaldo por JS.  Si no se puede pulsar de
+   * la forma normal y no se insiste, el modal termina cerrándose con "Salir" y
+   * se pierde TODO lo escrito (es lo que pasaba con la escritura: los campos
+   * quedaban llenos y el guardado nunca llegaba a ejecutarse).
+   */
+  async _guardarConRespaldo(page, sufijo, texto = 'Guardar') {
+    if (await this._clickPorIdSufijo(page, sufijo)) return true;
+    if (await this._clickBotonAccion(page, texto)) return true;
+
+    const pulsado = await page
+      .evaluate((s) => {
+        const el = document.querySelector(`[id$="${s}"]`);
+        if (!el) return false;
+        el.click();
+        return true;
+      }, sufijo)
+      .catch(() => false);
+
+    if (!pulsado) {
+      this.logger.warn(`No se pudo guardar con *${sufijo}.`);
+      return false;
+    }
+    this.logger.info(`Botón *${sufijo} pulsado por JS (guardado).`);
+    await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
+    await page.waitForTimeout(1200);
+    return true;
   }
 
   /**
