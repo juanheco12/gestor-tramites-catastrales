@@ -384,6 +384,32 @@ class MigracionTramiteService {
       // Se avisa en pantalla: guardar con campos vacíos deja el trámite mal.
       avisos.push(`Fuente administrativa sin llenar: ${vacios.join(', ')}.`);
     }
+    // Un campo deshabilitado NO viaja en el envío aunque en pantalla se vea
+    // lleno: se habilitan todos justo antes de guardar para que lo escrito
+    // llegue al servidor. De paso queda en el log su estado real.
+    const estado = await page
+      .evaluate((sufijos) => {
+        const salida = {};
+        for (const s of sufijos) {
+          const todos = Array.from(document.querySelectorAll(`[id$="${s}"]`));
+          const el =
+            todos.find((e) => e.offsetParent !== null || e.getClientRects().length > 0) ||
+            todos[0];
+          if (!el) {
+            salida[s] = 'no existe';
+            continue;
+          }
+          salida[s] = `"${el.value}" disabled=${el.disabled} readonly=${!!el.readOnly}`;
+          el.removeAttribute('disabled');
+          el.removeAttribute('readonly');
+          el.disabled = false;
+          if ('readOnly' in el) el.readOnly = false;
+        }
+        return salida;
+      }, ['_CmbTipoFuente', '_TEscrituraM', '_TFechaEscrituraM', '_TNotariaM', '_TFechaICM', '_TFechaVigM'])
+      .catch(() => ({}));
+    this.logger.info(`Fuente al guardar: ${JSON.stringify(estado)}`);
+
     onProgreso('Guardando Fuente Administrativa...');
     if (!(await this._clickPorIdSufijo(page, '_BtnGuardaEscritura'))) {
       await this._clickBotonAccion(page, 'Guardar');
