@@ -1344,8 +1344,11 @@ class MigracionTramiteService {
           )
           .catch(() => {});
       }
-      await page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
-      await page.waitForTimeout(500);
+      // Un desplegable de edis puede disparar un postback que vuelve a dibujar
+      // el formulario: hay que dejarlo terminar antes de escribir lo demás, o
+      // lo siguiente se pierde al redibujarse.
+      await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+      await page.waitForTimeout(1200);
       this.logger.info(`Select "${etiqueta}" = "${mejor.text}"${puesto ? '' : ' (por JS)'}`);
     } else {
       const puesto = await locator
@@ -1462,39 +1465,61 @@ class MigracionTramiteService {
     await this._llenarInput(page, 'Sexo', extras.sexo || 'Masculino', { idSufijo: '_CmbSexo' });
   }
 
-  /** Campos del modal ESCRITURA / fuente administrativa (PanelPopEscritura). */
+  /**
+   * Campos del modal ESCRITURA / fuente administrativa (PanelPopEscritura).
+   *
+   * El desplegable "Tipo Fuente" dispara un postback que vuelve a dibujar el
+   * modal, así que lo escrito después se perdía (en el origen quedaba solo el
+   * tipo y el resto en blanco).  Por eso, tras llenar todo, se comprueba campo
+   * por campo y se reescribe lo que haya quedado vacío.
+   */
   async _llenarCamposFuente(page, datosOrigen, extras) {
     const buscar = this._crearBuscador(datosOrigen);
+    const campos = [
+      ['Tipo Fuente', extras.tipoFuente || 'Escritura', '_CmbTipoFuente'],
+      ['Numero', extras.numeroFuente || buscar('NUMERO'), '_TEscrituraM'],
+      ['Fecha', extras.fechaFuente || buscar('FECHA'), '_TFechaEscrituraM'],
+      [
+        'Ente Emisor',
+        extras.enteEmisor || buscar('ENTE EMISOR', 'ENTE', 'NOTARIA'),
+        '_TNotariaM',
+      ],
+      [
+        'Fecha Inscripcion Catastral',
+        extras.fechaInscripcion || buscar('INSCRIPCION'),
+        '_TFechaICM',
+      ],
+      // edis la exige ("digite fecha de vigencia fiscal").
+      [
+        'Fecha Vigencia Fiscal',
+        extras.fechaVigencia || buscar('VIGENCIA') || '01/01/2027',
+        '_TFechaVigM',
+      ],
+    ];
 
-    await this._llenarInput(page, 'Tipo Fuente', extras.tipoFuente || 'Escritura', {
-      idSufijo: '_CmbTipoFuente',
-    });
-    await this._llenarInput(page, 'Numero', extras.numeroFuente || buscar('NUMERO'), {
-      idSufijo: '_TEscrituraM',
-    });
-    await this._llenarInput(page, 'Fecha', extras.fechaFuente || buscar('FECHA'), {
-      idSufijo: '_TFechaEscrituraM',
-    });
-    await this._llenarInput(
-      page,
-      'Ente Emisor',
-      extras.enteEmisor || buscar('ENTE EMISOR', 'ENTE', 'NOTARIA'),
-      { idSufijo: '_TNotariaM' }
-    );
-    await this._llenarInput(
-      page,
-      'Fecha Inscripcion Catastral',
-      extras.fechaInscripcion || buscar('INSCRIPCION'),
-      { idSufijo: '_TFechaICM' }
-    );
-    // edis la exige ("digite fecha de vigencia fiscal"): en el destino viene
-    // puesta, pero en el origen el modal la trae vacía.
-    await this._llenarInput(
-      page,
-      'Fecha Vigencia Fiscal',
-      extras.fechaVigencia || buscar('VIGENCIA') || '01/01/2027',
-      { idSufijo: '_TFechaVigM' }
-    );
+    for (const [etiqueta, valor, idSufijo] of campos) {
+      await this._llenarInput(page, etiqueta, valor, { idSufijo });
+    }
+
+    for (let intento = 1; intento <= 2; intento++) {
+      const vacios = [];
+      for (const campo of campos) {
+        const [, valor, idSufijo] = campo;
+        if (!valor) continue;
+        const actual = await this._leerPorIds(page, { v: idSufijo });
+        if (!String(actual.v || '').trim()) vacios.push(campo);
+      }
+      if (vacios.length === 0) return;
+
+      this.logger.warn(
+        `Fuente administrativa: quedaron vacíos ${vacios
+          .map((c) => c[0])
+          .join(', ')}; se reescriben (intento ${intento}).`
+      );
+      for (const [etiqueta, valor, idSufijo] of vacios) {
+        await this._llenarInput(page, etiqueta, valor, { idSufijo });
+      }
+    }
   }
 
   /* ===================== UTILIDADES ===================== */
