@@ -255,7 +255,13 @@ class MigracionTramiteService {
       .evaluate((mapa) => {
         const salida = {};
         for (const [clave, sufijo] of Object.entries(mapa)) {
-          const el = document.querySelector(`[id$="${sufijo}"]`);
+          // Se prefiere el campo VISIBLE, igual que al escribir: si hay un
+          // duplicado oculto con el mismo final de id, leer el equivocado hacía
+          // dar por bueno un campo que en pantalla estaba vacío.
+          const todos = Array.from(document.querySelectorAll(`[id$="${sufijo}"]`));
+          const el =
+            todos.find((e) => e.offsetParent !== null || e.getClientRects().length > 0) ||
+            todos[0];
           if (!el) {
             salida[clave] = '';
             continue;
@@ -373,7 +379,11 @@ class MigracionTramiteService {
     }
     await this._cerrarAviso(page);
     onProgreso('Llenando campos de Fuente Administrativa...');
-    await this._llenarCamposFuente(page, datosFuente, extras);
+    const vacios = await this._llenarCamposFuente(page, datosFuente, extras);
+    if (vacios && vacios.length > 0) {
+      // Se avisa en pantalla: guardar con campos vacíos deja el trámite mal.
+      avisos.push(`Fuente administrativa sin llenar: ${vacios.join(', ')}.`);
+    }
     onProgreso('Guardando Fuente Administrativa...');
     if (!(await this._clickPorIdSufijo(page, '_BtnGuardaEscritura'))) {
       await this._clickBotonAccion(page, 'Guardar');
@@ -1497,29 +1507,38 @@ class MigracionTramiteService {
       ],
     ];
 
-    for (const [etiqueta, valor, idSufijo] of campos) {
-      await this._llenarInput(page, etiqueta, valor, { idSufijo });
-    }
+    // El tipo de fuente va primero y SOLO: su postback vuelve a dibujar el
+    // modal, así que todo lo demás se escribe cuando ya terminó.
+    const [tipo, ...resto] = campos;
+    await this._llenarInput(page, tipo[0], tipo[1], { idSufijo: tipo[2] });
+    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(1200);
 
-    for (let intento = 1; intento <= 2; intento++) {
-      const vacios = [];
-      for (const campo of campos) {
-        const [, valor, idSufijo] = campo;
-        if (!valor) continue;
-        const actual = await this._leerPorIds(page, { v: idSufijo });
-        if (!String(actual.v || '').trim()) vacios.push(campo);
-      }
-      if (vacios.length === 0) return;
-
-      this.logger.warn(
-        `Fuente administrativa: quedaron vacíos ${vacios
-          .map((c) => c[0])
-          .join(', ')}; se reescriben (intento ${intento}).`
-      );
-      for (const [etiqueta, valor, idSufijo] of vacios) {
+    // Cada campo se escribe y se comprueba en el acto, reintentando el suyo:
+    // así un redibujado a destiempo no deja el formulario a medias.
+    for (const [etiqueta, valor, idSufijo] of resto) {
+      if (!valor) continue;
+      for (let intento = 1; intento <= 3; intento++) {
         await this._llenarInput(page, etiqueta, valor, { idSufijo });
+        const actual = await this._leerPorIds(page, { v: idSufijo });
+        if (String(actual.v || '').trim()) break;
+        this.logger.warn(`"${etiqueta}" quedó vacío; se reescribe (intento ${intento}).`);
+        await page.waitForTimeout(600);
       }
     }
+
+    // Foto final de lo que realmente quedó en el formulario.
+    const lectura = {};
+    for (const [, , idSufijo] of campos) lectura[idSufijo] = idSufijo;
+    const puestos = await this._leerPorIds(page, lectura);
+    const vacios = campos
+      .filter(([, valor, idSufijo]) => valor && !String(puestos[idSufijo] || '').trim())
+      .map(([etiqueta]) => etiqueta);
+    this.logger.info(
+      `Fuente administrativa antes de guardar: ` +
+        campos.map(([e, , id]) => `${e}="${puestos[id] || ''}"`).join(', ')
+    );
+    return vacios;
   }
 
   /* ===================== UTILIDADES ===================== */
