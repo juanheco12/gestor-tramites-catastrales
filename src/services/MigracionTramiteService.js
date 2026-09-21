@@ -1487,6 +1487,14 @@ class MigracionTramiteService {
       extras.fechaInscripcion || buscar('INSCRIPCION'),
       { idSufijo: '_TFechaICM' }
     );
+    // edis la exige ("digite fecha de vigencia fiscal"): en el destino viene
+    // puesta, pero en el origen el modal la trae vacía.
+    await this._llenarInput(
+      page,
+      'Fecha Vigencia Fiscal',
+      extras.fechaVigencia || buscar('VIGENCIA') || '01/01/2027',
+      { idSufijo: '_TFechaVigM' }
+    );
   }
 
   /* ===================== UTILIDADES ===================== */

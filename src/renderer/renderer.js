@@ -1291,6 +1291,7 @@ const MIGRAR_CAMPOS_RECORDADOS = [
   'migrar-fecha-fuente',
   'migrar-ente',
   'migrar-fecha-insc',
+  'migrar-fecha-vigencia',
 ];
 const MIGRAR_CLAVE = 'migrar-datos-adicionales';
 
@@ -1306,6 +1307,7 @@ const MIGRAR_VALORES_FIJOS = {
   'migrar-fecha-fuente': '09/09/2022',
   'migrar-ente': 'Notaria Segunda De Monteria',
   'migrar-fecha-insc': '10/09/2026',
+  'migrar-fecha-vigencia': '01/01/2027',
 };
 
 function cargarDatosMigracion() {
@@ -1378,6 +1380,7 @@ document.getElementById('migrar-ejecutar').addEventListener('click', async () =>
     fechaFuente: document.getElementById('migrar-fecha-fuente').value.trim(),
     enteEmisor: document.getElementById('migrar-ente').value.trim(),
     fechaInscripcion: document.getElementById('migrar-fecha-insc').value.trim(),
+    fechaVigencia: document.getElementById('migrar-fecha-vigencia').value.trim(),
   };
 
   guardarDatosMigracion();
