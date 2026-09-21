@@ -836,6 +836,15 @@ function registrarIpc(contenedor, obtenerVentana) {
         progreso(`Leyendo datos del trámite ${origen}...`);
         const datosOrigen = await migracionService.leerOrigen(page, origen, progreso);
 
+        // 1b. El trámite origen (cancelación) tampoco trae fuente
+        // administrativa y no puede quedar vacía: se le escribe la misma
+        // escritura, aprovechando que ya está abierto en pantalla.
+        const fuenteOrigen = await migracionService.escribirFuenteEnOrigen(
+          page,
+          extras,
+          progreso
+        );
+
         // 2. Escribir datos en el destino
         progreso(`Escribiendo datos en el trámite ${destino}...`);
         const resultado = await migracionService.escribirDestino(
@@ -845,7 +854,10 @@ function registrarIpc(contenedor, obtenerVentana) {
           extras,
           progreso
         );
-        const avisos = (resultado && resultado.avisos) || [];
+        const avisos = [
+          ...((fuenteOrigen && fuenteOrigen.avisos) || []),
+          ...((resultado && resultado.avisos) || []),
+        ];
 
         notificar('migracion', {
           mensaje: `Datos migrados de ${origen} a ${destino}. Revise la pantalla y guarde.`,

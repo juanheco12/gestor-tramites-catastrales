@@ -350,6 +350,53 @@ class MigracionTramiteService {
       .catch(() => '');
   }
 
+  /**
+   * Llena la Fuente Administrativa del trámite que esté abierto en pantalla.
+   * Se usa en el destino y TAMBIÉN en el origen: las cancelaciones no la traen
+   * y no puede quedar vacía, así que lleva la misma escritura predeterminada.
+   * @returns {Promise<boolean>} true si se pudo llenar
+   */
+  async _escribirFuenteAdministrativa(page, datosFuente, extras, onProgreso, avisos) {
+    onProgreso('Navegando a pestaña Fte Administrativa...');
+    await this._irAPestana(page, 'Fte Administrativa');
+    onProgreso('Abriendo modo edición...');
+    if (
+      !(await this._abrirModalConReintento(
+        page,
+        'PanelPopEscritura',
+        '_BtnModEscritura',
+        'Modifica'
+      ))
+    ) {
+      avisos.push('No se pudo abrir la fuente administrativa.');
+      return false;
+    }
+    await this._cerrarAviso(page);
+    onProgreso('Llenando campos de Fuente Administrativa...');
+    await this._llenarCamposFuente(page, datosFuente, extras);
+    onProgreso('Guardando Fuente Administrativa...');
+    if (!(await this._clickPorIdSufijo(page, '_BtnGuardaEscritura'))) {
+      await this._clickBotonAccion(page, 'Guardar');
+    }
+    const aviso = await this._cerrarAviso(page);
+    if (aviso && /error/i.test(aviso)) avisos.push(`Fuente administrativa: ${aviso}`);
+    await this._cerrarModalAbierto(page);
+    return true;
+  }
+
+  /**
+   * Escribe la fuente administrativa en el trámite ORIGEN, que ya está abierto
+   * tras leerOrigen.  Se hace aquí para no tener que volver a abrirlo.
+   * @returns {Promise<{avisos: string[]}>}
+   */
+  async escribirFuenteEnOrigen(page, extras, onProgreso = () => {}) {
+    this._atenderDialogos(page);
+    const avisos = [];
+    onProgreso('Llenando la fuente administrativa del trámite origen...');
+    await this._escribirFuenteAdministrativa(page, {}, extras, onProgreso, avisos);
+    return { avisos: avisos.map((a) => `Origen: ${a}`) };
+  }
+
   async escribirDestino(page, radicado, datos, extras, onProgreso = () => {}) {
     this._atenderDialogos(page);
     // Lo que edis rechace se junta aquí para avisarlo al final, en vez de
@@ -457,24 +504,7 @@ class MigracionTramiteService {
     }
 
     /* --- Fte Administrativa (datos SIEMPRE de los predeterminados/extras) --- */
-    onProgreso('Navegando a pestaña Fte Administrativa...');
-    await this._irAPestana(page, 'Fte Administrativa');
-    onProgreso('Abriendo modo edición...');
-    await this._abrirModalConReintento(
-      page,
-      'PanelPopEscritura',
-      '_BtnModEscritura',
-      'Modifica'
-    );
-    await this._cerrarAviso(page);
-    onProgreso('Llenando campos de Fuente Administrativa...');
-    await this._llenarCamposFuente(page, datos.fuente, extras);
-    onProgreso('Guardando Fuente Administrativa...');
-    if (!(await this._clickPorIdSufijo(page, '_BtnGuardaEscritura'))) {
-      await this._clickBotonAccion(page, 'Guardar');
-    }
-    await this._cerrarAviso(page);
-    await this._cerrarModalAbierto(page);
+    await this._escribirFuenteAdministrativa(page, datos.fuente, extras, onProgreso, avisos);
 
     await this._guardarDiagnostico(page, `destino-${radicado}`);
     onProgreso('Migración completada. Revise en pantalla.');
