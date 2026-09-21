@@ -7,13 +7,6 @@ const { SyncEngine } = require('./SyncEngine');
 const { ConsultaTramiteService } = require('./ConsultaTramiteService');
 const { withRetry } = require('../utils/retry');
 
-// Umbral para decidir si vale la pena consultar en la web la fecha real de
-// envío de cada trámite recién ausente, en vez de asumir "hoy" (que es lo
-// correcto casi siempre). Bien por encima del ciclo normal de auto-sync
-// (10-20 min): solo se activa ante una brecha genuina, no ante un ciclo
-// que tardó un poco más de lo normal.
-const BRECHA_MINUTOS_PARA_CONSULTAR = 90;
-
 /**
  * Servicio principal del Sincronizador de Bandeja. Orquesta:
  *   navegador (BrowserManager) -> extracción (BandejaScraper)
@@ -79,9 +72,6 @@ class BandejaSyncService extends EventEmitter {
     this.enEjecucion = true;
 
     const inicio = Date.now();
-    // Se lee ANTES de crear el registro de esta corrida: es la última
-    // sincronización previa, la que define si hubo una brecha larga.
-    const ultimaCompletada = this.syncLogs.ultimaCompletada();
     const logId = this.syncLogs.iniciar();
     const errores = [];
     let paginaActual = null;
@@ -131,35 +121,12 @@ class BandejaSyncService extends EventEmitter {
       this._progreso('persistencia', `Guardando ${tramitesWeb.length} trámites...`);
       const resumenPersistencia = this.engine.persistir(tramitesWeb);
 
-      // Marcar "enviado" lo que salió de la bandeja: por defecto con la
-      // fecha de hoy (correcto casi siempre, con sincronizaciones cada
-      // pocos minutos). Pero si hubo una brecha larga sin sincronizar,
-      // "hoy" sería la fecha del día en que por fin se sincronizó, no la
-      // fecha real en que cada trámite se envió — para eso se consulta la
-      // fecha real de cada uno en edis antes de marcarlos.
+      // Lo que salió de la bandeja se marca "enviado" con la fecha de hoy.
+      // La sincronización SOLO lee la bandeja: antes, tras una brecha larga,
+      // entraba a "consulta de trámites" a averiguar la fecha real de cada
+      // uno, lo que hacía un recorrido lento y visible que ya no se usa.
       if (this.gestionRepository && resumenPersistencia.ausentes.length > 0) {
-        const brechaMs = ultimaCompletada
-          ? Date.now() - new Date(ultimaCompletada.replace(' ', 'T')).getTime()
-          : null;
-        const huboBrechaLarga = brechaMs === null || brechaMs > BRECHA_MINUTOS_PARA_CONSULTAR * 60 * 1000;
-
-        const fechasPorId = {};
-        if (huboBrechaLarga && paginaActual) {
-          this._progreso(
-            'fechas',
-            `Sin sincronizar hace tiempo: consultando la fecha real de envío de ` +
-              `${resumenPersistencia.ausentes.length} trámite(s)...`
-          );
-          for (const { id, numero_tramite } of resumenPersistencia.ausentes) {
-            const fecha = await this.consultaTramite.consultarFechaEnvio(paginaActual, numero_tramite);
-            if (fecha) fechasPorId[id] = fecha;
-          }
-        }
-
-        this.gestionRepository.marcarEnviados(
-          resumenPersistencia.ausentes.map((a) => a.id),
-          fechasPorId
-        );
+        this.gestionRepository.marcarEnviados(resumenPersistencia.ausentes.map((a) => a.id));
       }
 
       // El sistema queda "siempre sincronizado": además de guardar los datos
