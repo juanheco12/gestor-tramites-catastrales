@@ -1028,10 +1028,31 @@ class MigracionTramiteService {
    * dentro de un modal cerrado y los datos nunca llegaban a edis.
    */
   async _abrirModalConReintento(page, idModal, sufijoBoton, textoBoton) {
-    for (let intento = 1; intento <= 2; intento++) {
-      const pulsado =
+    for (let intento = 1; intento <= 3; intento++) {
+      let pulsado =
         (await this._clickPorIdSufijo(page, sufijoBoton)) ||
         (textoBoton ? await this._clickBotonAccion(page, textoBoton) : false);
+
+      // Último recurso: pulsarlo por JS aunque su panel no esté visible. Es un
+      // botón de envío de ASP.NET, así que el postback se dispara igual. Sin
+      // esto, si la pestaña no llegaba a mostrarse el modal nunca se abría y la
+      // sección quedaba en blanco (pasaba en el trámite origen).
+      if (!pulsado) {
+        pulsado = await page
+          .evaluate((s) => {
+            const el = document.querySelector(`[id$="${s}"]`);
+            if (!el) return false;
+            el.click();
+            return true;
+          }, sufijoBoton)
+          .catch(() => false);
+        if (pulsado) {
+          this.logger.info(`Botón *${sufijoBoton} pulsado por JS (panel no visible).`);
+          await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+          await page.waitForTimeout(800);
+        }
+      }
+
       if (pulsado && (await this._esperarModal(page, idModal))) return true;
       this.logger.warn(`No se abrió ${idModal} (intento ${intento}).`);
       await this._cerrarAviso(page);
@@ -1269,10 +1290,13 @@ class MigracionTramiteService {
           // el DOM aunque estén cerrados, y escribir en uno cerrado no surte
           // efecto y además lo oculta como si hubiera funcionado.
           const els = Array.from(document.querySelectorAll(`[id$="${s}"]`));
-          const el = els.find(
+          const visible = els.find(
             (e) => e.offsetParent !== null || e.getClientRects().length > 0
           );
-          if (!el) return { encontrado: false, oculto: els.length > 0 };
+          // Se prefiere el visible; si ninguno lo está pero el campo existe, se
+          // usa igual: antes de guardar se habilitan, así que el valor viaja.
+          const el = visible || els[0];
+          if (!el) return { encontrado: false, oculto: false };
           el.setAttribute('data-robot-campo', t);
 
           if (el.tagName === 'SELECT') {
