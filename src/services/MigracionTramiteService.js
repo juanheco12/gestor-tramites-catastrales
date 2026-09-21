@@ -435,7 +435,10 @@ class MigracionTramiteService {
 
     /* --- Dirección del predio: "+" abre PanelPopDireccion; la dirección del
        origen se pega en "Complemento dirección". --- */
-    const direccion = extras.direccion || campos.direccion || '';
+    // La escrita a mano también se limpia (sin "L" de CL y sin guion).
+    const direccion = extras.direccion
+      ? this._normalizarDireccion(extras.direccion)
+      : campos.direccion || '';
     if (direccion) {
       onProgreso('Agregando dirección del predio...');
       if (await this._abrirModalConReintento(page, 'PanelPopDireccion', '_BtnAgregaDir')) {

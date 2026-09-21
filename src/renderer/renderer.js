@@ -1273,16 +1273,13 @@ const migrarEstado = document.getElementById('migrar-estado');
  * casi siempre los mismos entre trámites, así que se guardan y se recargan
  * para no tener que escribirlos cada vez. Los radicados NO se guardan.
  */
+// Solo se recuerda lo que se repite entre trámites: la escritura y las
+// constantes del propietario. Lo que cambia en cada trámite NO se recuerda,
+// porque se lee del radicado origen y un valor viejo guardado sobrescribía el
+// correcto sin que se notara (matrículas y direcciones de otro trámite).
 const MIGRAR_CAMPOS_RECORDADOS = [
-  'migrar-destino-eco',
-  'migrar-mat-circulo',
-  'migrar-mat-numero',
   'migrar-tipo-predio',
-  'migrar-direccion',
-  'migrar-tipo-dir',
-  'migrar-nombre',
   'migrar-tipo-doc',
-  'migrar-documento',
   'migrar-porcentaje',
   'migrar-fecha-tenencia',
   'migrar-sexo',
@@ -1292,6 +1289,18 @@ const MIGRAR_CAMPOS_RECORDADOS = [
   'migrar-ente',
   'migrar-fecha-insc',
   'migrar-fecha-vigencia',
+];
+
+// Propios de cada trámite: se vacían al abrir la ventana para que siempre
+// manden los datos leídos del origen.
+const MIGRAR_CAMPOS_POR_TRAMITE = [
+  'migrar-destino-eco',
+  'migrar-mat-circulo',
+  'migrar-mat-numero',
+  'migrar-direccion',
+  'migrar-tipo-dir',
+  'migrar-nombre',
+  'migrar-documento',
 ];
 const MIGRAR_CLAVE = 'migrar-datos-adicionales';
 
@@ -1322,6 +1331,10 @@ function cargarDatosMigracion() {
     if (!campo) continue;
     const valor = guardado[id] || MIGRAR_VALORES_FIJOS[id] || '';
     if (valor) campo.value = valor;
+  }
+  for (const id of MIGRAR_CAMPOS_POR_TRAMITE) {
+    const campo = document.getElementById(id);
+    if (campo) campo.value = '';
   }
 }
 
