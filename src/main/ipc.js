@@ -170,6 +170,19 @@ function registrarIpc(contenedor, obtenerVentana) {
   });
 
   /**
+   * Deja el radicado como vive en la base: si viene solo el número ("1330"),
+   * le antepone el año actual ("2026-1330"). Un radicado que ya trae año (o
+   * cualquier otro formato con guion) se respeta tal cual. Devuelve '' si no
+   * hay nada. Única fuente de verdad para el ingreso individual y en lote.
+   */
+  const normalizarRadicado = (crudo) => {
+    const numero = String(crudo || '').trim();
+    if (!numero) return '';
+    if (/^\d+$/.test(numero)) return `${new Date().getFullYear()}-${numero}`;
+    return numero;
+  };
+
+  /**
    * Agrega (o completa) UN trámite al histórico. Es la misma lógica que usa
    * el agregado individual; se comparte para que el ingreso masivo siga
    * exactamente las mismas reglas (no crear duplicados si el radicado ya
@@ -178,7 +191,13 @@ function registrarIpc(contenedor, obtenerVentana) {
    * @returns {{creado: boolean}} creado=true si el radicado no existía
    */
   const agregarUno = (datos) => {
-    const radicado = String(datos.radicado || '').trim();
+    // Se normaliza el año ANTES de buscar: en la oficina se habla del
+    // radicado sin el año ("1330"), pero en la base vive con año
+    // ("2026-1330"). Sin esto, escribir el número corto no encontraba el
+    // trámite real y creaba un DUPLICADO (presente=0) que además no aparecía
+    // bajo el filtro de año del histórico, y dejaba el real intacto en la
+    // bandeja. Mismo criterio que el ingreso en lote.
+    const radicado = normalizarRadicado(datos.radicado);
     if (!radicado) throw new Error('El radicado es obligatorio.');
 
     // Igual que en la bitácora de Excel: si el radicado ya existe (p. ej.
@@ -234,15 +253,14 @@ function registrarIpc(contenedor, obtenerVentana) {
    */
   ipcMain.handle(CANALES.AGREGAR_HISTORICO_LOTE, (_evento, { radicados = [], comunes = {} } = {}) => {
     try {
-      const anioActual = String(new Date().getFullYear());
       // Se acepta el número solo ("1234"): en la oficina se habla del
-      // radicado sin el año. Y se descartan repetidos.
+      // radicado sin el año. Y se descartan repetidos. Misma normalización
+      // que el ingreso individual (normalizarRadicado).
       const vistos = new Set();
       const lista = [];
       for (const crudo of radicados) {
-        let numero = String(crudo).trim();
+        const numero = normalizarRadicado(crudo);
         if (!numero) continue;
-        if (/^\d+$/.test(numero)) numero = `${anioActual}-${numero}`;
         if (vistos.has(numero)) continue;
         vistos.add(numero);
         lista.push(numero);
