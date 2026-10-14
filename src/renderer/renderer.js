@@ -1376,6 +1376,21 @@ const TERCERA_VALORES_FIJOS = {
   'ter-resultado-visita': 'Exitoso',
   'ter-tipo-doc-visita': 'Cedula_Ciudadania',
   'ter-modelo-texto': 'Mutación de Tercera',
+  'ter-corte': 'Que la Resolución 1149 de 2021',
+  'ter-considerando': [
+    'Que la Resolución 1040 de 2023 del Instituto Geográfico Agustín Codazzi (IGAC), en el artículo 4.5.1 numeral 3, señala que las mutaciones de tercera clase son aquellas que se refieren a los cambios que ocurren en los predios por nuevas construcciones o edificaciones, demoliciones y modificaciones de las condiciones y características constructivas. Así mismo, se incluyen los cambios que se presenten respecto del uso de la unidad de construcción y destino económico del predio.',
+    'Que el(la) señor(a) ANDRES FELIPE MOLANO RODRIGUEZ, identificado(a) con CC. 80.018.815, quien actúa como representante legal de la sociedad CONSTRUARK SOLUCIONES S.A.S, identificada con NIT. 900505833, en su condición de propietario del folio de matrícula No. {MATRICULA} vinculado al número predial No. {NPN}, inscrito en la base de datos catastral, presentó ante la Oficina adscrita a la secretaria de Planeación del municipio de Montería, una solicitud de incorporación o modificación del elemento constructivo, soportada en los siguientes documentos aportados: Solicitud, cedula de ciudadanía, certificado de tradición de la matrícula inmobiliaria {MATRICULA}, cámara de comercio, escritura publica No. 291 del 25/02/2026 de la notaría primera de Monteria y plano arquitectónico.',
+    'Que en atención a la solicitud presentada se realizó la verificación de la documentación aportada y visita técnica realizada el día 08 de octubre del 2026, se concluye que se procede a incorporar el elemento constructivo al predio con referencia catastral No. {NPN}, para un total de área de 204.27 metros cuadrados.',
+    'Que, revisados los antecedentes catastrales del municipio de Montería, verificada la documentación aportada por el(la) solicitante, se procede la validación correspondiente en los términos del artículo 2.2.2.2.6. del Decreto 1170 de 2015, modificado por el Decreto 148 de 2020, se pudo establecer que para el predio con referencia catastral predial {NPN} procede la mutación de tercera clase, por incorporar o modificar las unidades y su correspondiente inscripción en el catastro, conforme lo indica el artículo 4.5.1 numeral 3 de la Resolución 1040 de 2023, en concordancia del artículo 2.2.2.2.2 literal C del 1170 de 2015, modificado por el Decreto 148 de 2020.',
+  ].join('\n\n'),
+  'ter-articulos': [
+    'ARTICULO SEGUNDO: La inscripción ordenada en el artículo anterior se realizará de conformidad con lo dispuesto en el capítulo 6, artículos 4.6.1 y subsiguientes de la Resolución 1040 de 2023 expedida por el IGAC.',
+    'ARTÍCULO TERCERO: la notificación de la presente resolución se realizará conforme lo dispuesto en el inciso 3 del artículo 4.8.2 de la Resolución 1040 de 2023, del Instituto Geográfico Agustín Codazzi.',
+    'ARTÍCULO CUARTO: Contra la presente resolución procede el recurso de reposición ante el secretario de Planeación, y el recurso de apelación se podrá interponer directamente o como subsidiario al de reposición ante el superior inmediato, dentro de los diez (10) días siguientes a la notificación, de conformidad a los artículos 76 y 77 de la Ley 1437 de 2011 y lo dispuesto en artículo 4.8.4 de la Resolución 1040 de 2023. Cuando sea rechazado el recurso de apelación procede el recurso de queja de conformidad con lo establecido en el artículo 74 y siguientes de la Ley 1437 de 2011. Recursos que se concederán en efecto suspensivo',
+    'ARTÍCULO QUINTO: Los avalúos inscritos con posterioridad al primero (1°) de enero tendrán vigencia fiscal para el año siguiente, ajustados con el índice que determine el Gobierno Nacional, de conformidad con lo dispuesto en el artículo 4.7.13 de la Resolución 1040 de 2023 expedida por el Instituto Geográfico Agustín Codazzi – IGAC.',
+    'ARTÍCULO SEXTO: REMITIR copia del acto administrativo, cuando quede en firme, a la Dirección de Rentas del municipio de Montería para la actualización de la información para fines fiscales y tributarios.',
+    'COMUNÍQUESE Y CÚMPLASE',
+  ].join('\n\n'),
 };
 const TERCERA_CAMPOS = [
   ...Object.keys(TERCERA_VALORES_FIJOS),
@@ -1407,6 +1422,7 @@ function cargarDatosTercera() {
     document.getElementById('ter-fecha-visita').value = hoyDdMmAaaa();
   }
   document.getElementById('ter-subir-fotos').checked = guardado['ter-subir-fotos'] !== false;
+  document.getElementById('ter-motivada-activa').checked = guardado['ter-motivada-activa'] !== false;
   document.getElementById('ter-radicado').value = '';
 }
 
@@ -1446,6 +1462,7 @@ function guardarDatosTercera() {
     if (valorTer(id)) datos[id] = valorTer(id);
   }
   datos['ter-subir-fotos'] = document.getElementById('ter-subir-fotos').checked;
+  datos['ter-motivada-activa'] = document.getElementById('ter-motivada-activa').checked;
   try {
     localStorage.setItem(TERCERA_CLAVE, JSON.stringify(datos));
   } catch {
@@ -1527,6 +1544,12 @@ async function ejecutarTercera(boton) {
     },
     subirFotos: document.getElementById('ter-subir-fotos').checked,
     modeloTexto: valorTer('ter-modelo-texto'),
+    motivada: {
+      activa: document.getElementById('ter-motivada-activa').checked,
+      corte: valorTer('ter-corte'),
+      considerando: valorTer('ter-considerando'),
+      articulos: valorTer('ter-articulos'),
+    },
   };
   guardarDatosTercera();
 

@@ -446,6 +446,22 @@
         <div class="ficha-campos">
           <label>Modelo a cargar con la nube <input id="ter-modelo-texto" type="text" /></label>
         </div>
+        <h3 class="ter-titulo">Motivada</h3>
+        <label class="ter-check">
+          <input id="ter-motivada-activa" type="checkbox" checked />
+          Escribir la motivada y los artículos finales
+        </label>
+        <p class="modal-texto">
+          {MATRICULA} y {NPN} se reemplazan solos por los del radicado (se leen
+          en edis). En Considerando se deja el texto del modelo hasta la frase
+          de corte y desde ahí va la motivada; los artículos reemplazan los del
+          modelo desde el segundo.
+        </p>
+        <div class="ter-motivada">
+          <label>Frase de corte en Considerando <input id="ter-corte" type="text" /></label>
+          <label>Considerando (motivada) <textarea id="ter-considerando" rows="9"></textarea></label>
+          <label>Artículos finales (desde el segundo) <textarea id="ter-articulos" rows="7"></textarea></label>
+        </div>
       </div>
 
       <div id="migrar-seccion-quinta">

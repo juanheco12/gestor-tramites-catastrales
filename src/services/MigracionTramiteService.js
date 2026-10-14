@@ -562,6 +562,11 @@ class MigracionTramiteService {
 
     onProgreso('Navegando a pestaña Predio...');
     await this._irAPestana(page, 'Predio');
+    // Matrícula y NPN propios de ESTE radicado: van en la motivada.
+    const delPredio = await this._leerMatriculaYNpn(page);
+    this.logger.info(
+      `Tercera ${radicado}: matricula="${delPredio.matricula}" npn="${delPredio.npn}"`
+    );
     if (await this._abrirModalConReintento(page, 'PanelPopPredio', '_BtnModPredio', 'Modifica')) {
       onProgreso('Cambiando destino económico y tipo de predio...');
       await this._llenarCamposPredio(page, {}, {
@@ -582,7 +587,19 @@ class MigracionTramiteService {
     await this._escribirFuenteAdministrativa(page, {}, datos.fuente || {}, onProgreso, avisos);
     await this._escribirVisita(page, datos.visita || {}, onProgreso, avisos);
     await this._subirFotos(page, datos.fotos || [], onProgreso, avisos);
-    await this._cargarModeloTexto(page, datos.modeloTexto, onProgreso, avisos);
+    const modeloCargado = await this._cargarModeloTexto(
+      page,
+      datos.modeloTexto,
+      onProgreso,
+      avisos
+    );
+    if (datos.motivada && datos.motivada.activa) {
+      if (modeloCargado) {
+        await this._escribirMotivada(page, datos.motivada, delPredio, radicado, onProgreso, avisos);
+      } else {
+        avisos.push('Motivada: no se escribió porque el modelo de texto motivo no se cargó.');
+      }
+    }
 
     await this._guardarDiagnostico(page, `tercera-${radicado}`);
     onProgreso('Trámite de tercera completado. Revise en pantalla.');
@@ -861,13 +878,13 @@ class MigracionTramiteService {
    * guarda.
    */
   async _cargarModeloTexto(page, modelo, onProgreso, avisos) {
-    if (!modelo) return;
+    if (!modelo) return false;
     onProgreso('Navegando a pestaña Texto Motivo...');
     await this._irAPestana(page, 'Texto Motivo');
     onProgreso(`Cargando el modelo "${modelo}"...`);
     if (!(await this._abrirModalConReintento(page, 'PanelPopTexto', '_BtnCargaTexto'))) {
       avisos.push('No se pudo abrir la lista de modelos de texto motivo.');
-      return;
+      return false;
     }
     await this._esperarPostbackTerminado(page);
 
@@ -913,7 +930,7 @@ class MigracionTramiteService {
       await this._guardarDiagnostico(page, 'modelo-texto');
       await this._clickPorIdSufijo(page, '_BtnSalirTexto');
       await this._esperarPostbackTerminado(page);
-      return;
+      return false;
     }
     this.logger.info(`Modelo de texto elegido: ${marcado.elegido}`);
 
@@ -944,7 +961,7 @@ class MigracionTramiteService {
       .catch(() => '');
     if (!epigrafe.trim()) {
       avisos.push(`Texto motivo: el modelo "${modelo}" no llenó el epígrafe; revíselo.`);
-      return;
+      return false;
     }
 
     onProgreso('Guardando texto motivo...');
@@ -953,6 +970,131 @@ class MigracionTramiteService {
     }
     const aviso = await this._cerrarAviso(page);
     if (aviso && /error|digite|debe/i.test(aviso)) avisos.push(`Texto motivo: ${aviso}`);
+    return true;
+  }
+
+  /** Matrícula ("140-198046") y NPN del trámite abierto. */
+  async _leerMatriculaYNpn(page) {
+    const d = await this._leerPorIds(page, {
+      orip: '_TCodigoORIP',
+      numero: '_TMatricula',
+      npn: '_LblNpnRadicado',
+    });
+    const matricula = d.orip && d.numero ? `${d.orip}-${d.numero}` : d.numero || '';
+    return { matricula, npn: d.npn || '' };
+  }
+
+  /**
+   * Motivada: en "Considerando" se deja el texto del modelo hasta la frase de
+   * corte y desde ahí se pone la motivada; en "Artículos finales" se
+   * reemplazan los artículos (del segundo en adelante).  {MATRICULA} y {NPN}
+   * se cambian por los del radicado.  Cada parte se guarda y se comprueba
+   * que quedó.
+   */
+  async _escribirMotivada(page, motivada, delPredio, radicado, onProgreso, avisos) {
+    const valores = { MATRICULA: delPredio.matricula, NPN: delPredio.npn, RADICADO: radicado };
+    const usadas = [...`${motivada.considerando || ''} ${motivada.articulos || ''}`.matchAll(/\{(\w+)\}/g)].map(
+      (m) => m[1]
+    );
+    const faltan = [...new Set(usadas)].filter((k) => !valores[k]);
+    if (faltan.length > 0) {
+      avisos.push(
+        `Motivada: no se escribió porque no se pudo leer ${faltan.join(' y ')} del trámite.`
+      );
+      return;
+    }
+    const rellenar = (texto) =>
+      String(texto || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\{(\w+)\}/g, (todo, k) => (k in valores ? valores[k] : todo))
+        .trim();
+
+    if (motivada.considerando) {
+      onProgreso('Escribiendo la motivada en Considerando...');
+      await this._irAPestana(page, 'Considerando');
+      const actual = String(
+        (await this._leerPorIds(page, { t: '_TConsiderando' })).t || ''
+      ).replace(/\r\n/g, '\n');
+      const corte = String(motivada.corte || '').trim();
+      let indice = corte ? actual.indexOf(corte) : -1;
+      if (indice < 0 && corte) indice = actual.toLowerCase().indexOf(corte.toLowerCase());
+      if (indice < 0) {
+        avisos.push(
+          `Motivada: no se encontró la frase de corte "${corte}" en Considerando; no se cambió.`
+        );
+      } else {
+        const nuevo = [actual.slice(0, indice).trim(), rellenar(motivada.considerando)]
+          .filter(Boolean)
+          .join('\n\n');
+        await this._escribirTextoLargo(page, 'Considerando', '_TConsiderando', nuevo);
+        await this._guardarTextoYComprobar(
+          page,
+          '_TConsiderando',
+          rellenar(motivada.considerando).slice(0, 60),
+          'Considerando',
+          onProgreso,
+          avisos
+        );
+      }
+    }
+
+    if (motivada.articulos) {
+      onProgreso('Escribiendo los artículos finales...');
+      await this._irAPestana(page, 'Artículos finales');
+      await this._escribirTextoLargo(page, 'Artículos finales', '_TArticulos', rellenar(motivada.articulos));
+      await this._guardarTextoYComprobar(
+        page,
+        '_TArticulos',
+        rellenar(motivada.articulos).slice(0, 60),
+        'Artículos finales',
+        onProgreso,
+        avisos
+      );
+    }
+  }
+
+  /** Escribe un texto largo en un área de texto y confirma que quedó entero. */
+  async _escribirTextoLargo(page, etiqueta, sufijo, texto) {
+    await this._esperarPostbackTerminado(page);
+    await this._llenarInput(page, etiqueta, texto, { idSufijo: sufijo });
+    const quedo = String((await this._leerPorIds(page, { t: sufijo })).t || '').replace(/\r\n/g, '\n');
+    if (quedo !== texto.trim()) {
+      // Respaldo por JS si el llenado normal no dejó el texto completo.
+      await page
+        .evaluate(
+          ({ s, v }) => {
+            for (const el of document.querySelectorAll(`[id$="${s}"]`)) {
+              el.removeAttribute('disabled');
+              el.removeAttribute('readonly');
+              el.value = v;
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          },
+          { s: sufijo, v: texto }
+        )
+        .catch(() => {});
+      this.logger.warn(`${etiqueta}: el texto se puso por JS.`);
+    }
+  }
+
+  /** Pulsa "Guardar Texto" y comprueba que el texto siguió ahí tras el postback. */
+  async _guardarTextoYComprobar(page, sufijo, inicioEsperado, etiqueta, onProgreso, avisos) {
+    onProgreso(`Guardando ${etiqueta}...`);
+    await this._habilitarParaEnvio(page, ['_TEpigrafe', '_TEncabezado', '_TConsiderando', '_TArticulo1', '_TArticulos']);
+    if (!(await this._guardarConRespaldo(page, '_BtnGuardaTexto'))) {
+      avisos.push(`No se pudo guardar ${etiqueta}.`);
+      return;
+    }
+    const aviso = await this._cerrarAviso(page);
+    if (aviso && /error|digite|debe/i.test(aviso)) avisos.push(`${etiqueta}: ${aviso}`);
+    await this._esperarPostbackTerminado(page);
+    const quedo = String((await this._leerPorIds(page, { t: sufijo })).t || '').replace(/\s+/g, ' ');
+    if (!quedo.includes(inicioEsperado.replace(/\s+/g, ' '))) {
+      avisos.push(`${etiqueta}: tras guardar, el texto no aparece; revíselo en edis.`);
+      await this._guardarDiagnostico(page, `motivada-${etiqueta}`);
+    } else {
+      this.logger.info(`${etiqueta} guardado y comprobado.`);
+    }
   }
 
   /* ----- ayudantes de llenado con verificación ----- */
