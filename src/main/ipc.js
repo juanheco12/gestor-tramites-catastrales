@@ -822,10 +822,16 @@ function registrarIpc(contenedor, obtenerVentana) {
   /* ------------------------- migración de datos entre trámites ------------------------- */
 
   ipcMain.handle(CANALES.MIGRAR_TRAMITE, async (_evento, opciones) => {
-    const { origen, destino, extras = {} } = opciones || {};
+    const { tipo = 'quinta', origen, destino, extras = {}, tercera = {} } = opciones || {};
+    const esTercera = tipo === 'tercera';
     try {
-      if (!origen || !destino) {
-        return { ok: false, error: 'Se necesita un radicado origen y uno destino.' };
+      if (esTercera ? !destino : !origen || !destino) {
+        return {
+          ok: false,
+          error: esTercera
+            ? 'Se necesita el radicado del trámite de tercera.'
+            : 'Se necesita un radicado origen y uno destino.',
+        };
       }
 
       if (syncService.enEjecucion) {
@@ -849,6 +855,22 @@ function registrarIpc(contenedor, obtenerVentana) {
         const { migracionService } = contenedor;
         const progreso = (mensaje) =>
           notificar('migracion', { mensaje, fase: 'progreso' });
+
+        if (esTercera) {
+          const r = await migracionService.escribirTercera(page, destino, tercera, progreso);
+          const avisos = (r && r.avisos) || [];
+          notificar('migracion', {
+            mensaje: `Trámite ${destino} llenado. Revise la pantalla.`,
+            fase: 'fin',
+          });
+          return {
+            ok: true,
+            avisos,
+            mensaje:
+              `Trámite de tercera ${destino} llenado. Revise la pantalla de edis.` +
+              (avisos.length > 0 ? ` Atención: ${avisos.join(' | ')}` : ''),
+          };
+        }
 
         // 1. Leer datos del origen
         progreso(`Leyendo datos del trámite ${origen}...`);

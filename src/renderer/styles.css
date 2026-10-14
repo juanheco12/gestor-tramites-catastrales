@@ -870,6 +870,7 @@ input.inp-sector { min-width: 40px; width: 52px; text-align: center; }
   color: var(--color-texto-secundario);
 }
 .migrar-extras[open] summary { margin-bottom: 8px; }
+.ter-titulo { margin: 12px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; opacity: .75; }
 
 .modal-caja {
   background: var(--color-panel);

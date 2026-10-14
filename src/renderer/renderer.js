@@ -1351,11 +1351,163 @@ function guardarDatosMigracion() {
   }
 }
 
+/* --- Mutación de tercera: valores que da el usuario, sin trámite origen --- */
+
+const TERCERA_CLAVE = 'migrar-tercera';
+const TERCERA_VALORES_FIJOS = {
+  'ter-destino-eco': 'Habitacional',
+  'ter-tipo-predio': 'Predio.Privado',
+  'ter-unidad': 'A',
+  'ter-tipo-cons': 'Residencial',
+  'ter-uso': 'Residencial.Vivienda_Hasta_3_Pisos',
+  'ter-pisos': '2',
+  'ter-area': '204.27',
+  'ter-anio': '2025',
+  'ter-conservacion': 'Intermedio',
+  'ter-clase': 'Casa',
+  'ter-tipologia': 'Tipo 4',
+  'ter-codigo': '2432022',
+  'ter-tipo-fuente': 'Escritura_Publica',
+  'ter-num-fuente': '291',
+  'ter-fecha-fuente': '25/02/2026',
+  'ter-ente': 'NOTARIA PRIMERA DE MONTERIA',
+  'ter-fecha-insc': '08/10/2026',
+  'ter-fecha-vigencia': '01/01/2027',
+  'ter-resultado-visita': 'Exitoso',
+  'ter-tipo-doc-visita': 'Cedula_Ciudadania',
+};
+const TERCERA_CAMPOS = [
+  ...Object.keys(TERCERA_VALORES_FIJOS),
+  'ter-fecha-visita',
+  'ter-nombre1',
+  'ter-apellido1',
+  'ter-doc-visita',
+];
+
+const valorTer = (id) => document.getElementById(id).value.trim();
+
+function hoyDdMmAaaa() {
+  const d = new Date();
+  const dos = (n) => String(n).padStart(2, '0');
+  return `${dos(d.getDate())}/${dos(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+function cargarDatosTercera() {
+  let guardado = {};
+  try {
+    guardado = JSON.parse(localStorage.getItem(TERCERA_CLAVE) || '{}');
+  } catch {
+    guardado = {};
+  }
+  for (const id of TERCERA_CAMPOS) {
+    document.getElementById(id).value = guardado[id] || TERCERA_VALORES_FIJOS[id] || '';
+  }
+  if (!valorTer('ter-fecha-visita')) {
+    document.getElementById('ter-fecha-visita').value = hoyDdMmAaaa();
+  }
+  document.getElementById('ter-radicado').value = '';
+}
+
+function guardarDatosTercera() {
+  const datos = {};
+  for (const id of TERCERA_CAMPOS) {
+    if (valorTer(id)) datos[id] = valorTer(id);
+  }
+  try {
+    localStorage.setItem(TERCERA_CLAVE, JSON.stringify(datos));
+  } catch {
+    // Sin almacenamiento disponible: no es crítico.
+  }
+}
+
+const migrarTipo = document.getElementById('migrar-tipo');
+
+function mostrarSeccionMigracion() {
+  const tercera = migrarTipo.value === 'tercera';
+  document.getElementById('migrar-seccion-tercera').classList.toggle('oculto', !tercera);
+  document.getElementById('migrar-seccion-quinta').classList.toggle('oculto', tercera);
+  document.getElementById('migrar-ejecutar').textContent = tercera
+    ? 'Llenar trámite de tercera'
+    : 'Migrar datos';
+  try {
+    localStorage.setItem('migrar-tipo', migrarTipo.value);
+  } catch {
+    // no crítico
+  }
+}
+
+migrarTipo.addEventListener('change', () => {
+  migrarEstado.textContent = '';
+  mostrarSeccionMigracion();
+});
+
 document.getElementById('btn-migrar-menu').addEventListener('click', () => {
   migrarEstado.textContent = '';
   cargarDatosMigracion();
+  cargarDatosTercera();
+  try {
+    migrarTipo.value = localStorage.getItem('migrar-tipo') || 'quinta';
+  } catch {
+    migrarTipo.value = 'quinta';
+  }
+  mostrarSeccionMigracion();
   modalMigrar.classList.remove('oculto');
 });
+
+async function ejecutarTercera(boton) {
+  const radicado = valorTer('ter-radicado');
+  if (!radicado) {
+    migrarEstado.textContent = 'Escriba el radicado del trámite de tercera.';
+    return;
+  }
+  const tercera = {
+    destino: valorTer('ter-destino-eco'),
+    tipoPredio: valorTer('ter-tipo-predio'),
+    construccion: {
+      unidad: valorTer('ter-unidad'),
+      tipo: valorTer('ter-tipo-cons'),
+      uso: valorTer('ter-uso'),
+      pisos: valorTer('ter-pisos'),
+      area: valorTer('ter-area'),
+      anio: valorTer('ter-anio'),
+      conservacion: valorTer('ter-conservacion'),
+      clase: valorTer('ter-clase'),
+      tipologia: valorTer('ter-tipologia'),
+      codigo: valorTer('ter-codigo'),
+    },
+    fuente: {
+      tipoFuente: valorTer('ter-tipo-fuente'),
+      numeroFuente: valorTer('ter-num-fuente'),
+      fechaFuente: valorTer('ter-fecha-fuente'),
+      enteEmisor: valorTer('ter-ente'),
+      fechaInscripcion: valorTer('ter-fecha-insc'),
+      fechaVigencia: valorTer('ter-fecha-vigencia'),
+    },
+    visita: {
+      resultado: valorTer('ter-resultado-visita'),
+      fecha: valorTer('ter-fecha-visita'),
+      nombre1: valorTer('ter-nombre1'),
+      apellido1: valorTer('ter-apellido1'),
+      tipoDocumento: valorTer('ter-tipo-doc-visita'),
+      documento: valorTer('ter-doc-visita'),
+    },
+  };
+  guardarDatosTercera();
+
+  boton.disabled = true;
+  migrarEstado.textContent = 'Abriendo edis...';
+  try {
+    const r = await window.bandejaApi.migrarTramite({ tipo: 'tercera', destino: radicado, tercera });
+    if (!r.ok) {
+      migrarEstado.textContent = `Error: ${r.error}`;
+      return;
+    }
+    migrarEstado.textContent = r.mensaje;
+    mostrarEstado(r.avisos && r.avisos.length > 0 ? 'progreso' : 'exito', r.mensaje);
+  } finally {
+    boton.disabled = false;
+  }
+}
 
 document.getElementById('migrar-cancelar').addEventListener('click', () => {
   modalMigrar.classList.add('oculto');
@@ -1363,6 +1515,10 @@ document.getElementById('migrar-cancelar').addEventListener('click', () => {
 
 document.getElementById('migrar-ejecutar').addEventListener('click', async () => {
   const boton = document.getElementById('migrar-ejecutar');
+  if (migrarTipo.value === 'tercera') {
+    await ejecutarTercera(boton);
+    return;
+  }
   const origen = document.getElementById('migrar-origen').value.trim();
   const destino = document.getElementById('migrar-destino').value.trim();
 

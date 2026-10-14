@@ -544,6 +544,348 @@ class MigracionTramiteService {
     return { avisos };
   }
 
+  /* ===================== TRÁMITE DE TERCERA ===================== */
+
+  /**
+   * Mutación de tercera (modificación de características constructivas): no
+   * hay trámite origen; se escriben los valores que da el usuario. Dirección,
+   * propietarios y terreno se dejan como están.
+   *
+   * @param {{destino, tipoPredio, construccion, fuente, visita}} datos
+   * @returns {Promise<{avisos: string[]}>}
+   */
+  async escribirTercera(page, radicado, datos, onProgreso = () => {}) {
+    this._atenderDialogos(page);
+    const avisos = [];
+    onProgreso(`Abriendo trámite ${radicado}...`);
+    await this._abrirTramite(page, radicado);
+
+    onProgreso('Navegando a pestaña Predio...');
+    await this._irAPestana(page, 'Predio');
+    if (await this._abrirModalConReintento(page, 'PanelPopPredio', '_BtnModPredio', 'Modifica')) {
+      onProgreso('Cambiando destino económico y tipo de predio...');
+      await this._llenarCamposPredio(page, {}, {
+        destino: datos.destino,
+        tipoPredio: datos.tipoPredio,
+      });
+      if (!(await this._guardarConRespaldo(page, '_BtnGuardaPred'))) {
+        avisos.push('No se pudo guardar el predio.');
+      }
+      const aviso = await this._cerrarAviso(page);
+      if (aviso && /error/i.test(aviso)) avisos.push(`Predio: ${aviso}`);
+      await this._cerrarModalAbierto(page);
+    } else {
+      avisos.push('No se pudo abrir el predio (destino económico sin cambiar).');
+    }
+
+    await this._escribirConstruccion(page, datos.construccion || {}, onProgreso, avisos);
+    await this._escribirFuenteAdministrativa(page, {}, datos.fuente || {}, onProgreso, avisos);
+    await this._escribirVisita(page, datos.visita || {}, onProgreso, avisos);
+
+    await this._guardarDiagnostico(page, `tercera-${radicado}`);
+    onProgreso('Trámite de tercera completado. Revise en pantalla.');
+    return { avisos };
+  }
+
+  /**
+   * "+" de Construcciones abre PanelTipologia.  Los desplegables van en
+   * cascada (el tipo carga los usos, la clase carga los tipos) y cada uno
+   * hace postback que redibuja el modal: por eso van primero y los textos
+   * después, con verificación.
+   */
+  async _escribirConstruccion(page, c, onProgreso, avisos) {
+    onProgreso('Navegando a pestaña Construcciones...');
+    await this._irAPestana(page, 'Construcciones');
+    onProgreso('Agregando unidad de construcción (+)...');
+    if (!(await this._abrirModalConReintento(page, 'PanelTipologia', '_BtnAgregaConstruccion'))) {
+      avisos.push('No se pudo abrir el formulario de construcción.');
+      return;
+    }
+    await this._cerrarAviso(page);
+
+    const desplegables = [
+      ['Tipo', c.tipo, '_CmbTipoUnidad2'],
+      ['Uso', c.uso, '_cmbUsoCons2'],
+      ['Estado de conservación', c.conservacion, '_CmbEstadoConservacion2'],
+      ['Clase', c.clase, '_CmbClaseTipologia'],
+      ['Tipo de tipología', c.tipologia, '_CmbTipoTipologia'],
+    ];
+    onProgreso('Eligiendo tipo, uso, conservación y tipología...');
+    await this._llenarDesplegables(page, desplegables);
+
+    if (c.codigo) {
+      onProgreso(`Eligiendo código de tipología ${c.codigo}...`);
+      if (!(await this._elegirCodigoTipologia(page, c.codigo))) {
+        avisos.push(
+          `Construcción: no se pudo elegir el código ${c.codigo}; elíjalo a mano con "Seleccionar...".`
+        );
+      }
+    }
+
+    onProgreso('Llenando unidad, pisos, área y año...');
+    const textos = [
+      ['Unidad', c.unidad, '_TNumUnidad2'],
+      ['Núm. pisos', c.pisos, '_TNpisos2'],
+      ['Área', c.area, '_TAreaCons2'],
+      ['Año construcción', c.anio, '_TAnoConstruccion2'],
+    ];
+    const vacios = await this._llenarTextosConVerificacion(page, textos);
+    if (vacios.length > 0) avisos.push(`Construcción sin llenar: ${vacios.join(', ')}.`);
+
+    const mal = await this._verificarDesplegables(page, desplegables);
+    if (mal.length > 0) avisos.push(`Construcción: ${mal.join('; ')}.`);
+
+    await this._habilitarParaEnvio(page, [...desplegables, ...textos].map((x) => x[2]));
+    onProgreso('Guardando construcción...');
+    if (!(await this._guardarConRespaldo(page, '_BtnGuardaTipologia'))) {
+      avisos.push('No se pudo guardar la construcción.');
+    }
+    const aviso = await this._cerrarAviso(page);
+    if (aviso && /error|digite|seleccione|debe/i.test(aviso)) avisos.push(`Construcción: ${aviso}`);
+
+    // PanelTipologia no es un "PanelPop*": _cerrarModalAbierto no lo ve. Si
+    // sigue abierto tras guardar, edis no aceptó el guardado; se cierra para
+    // poder seguir con las demás pestañas y se avisa.
+    if (await this._modalVisible(page, 'PanelTipologia')) {
+      avisos.push('Construcción: el formulario siguió abierto tras guardar; revísela en edis.');
+      await this._guardarDiagnostico(page, 'construccion-sin-guardar');
+      await this._clickPorIdSufijo(page, '_BtnSalirTipologia');
+      await this._esperarPostbackTerminado(page);
+    }
+  }
+
+  /**
+   * "Seleccionar..." abre PanelCodigoTipologia, una lista de códigos según la
+   * clase y el tipo elegidos.  Se pulsa la fila del código pedido.
+   */
+  async _elegirCodigoTipologia(page, codigo) {
+    const cod = String(codigo).trim();
+    await this._esperarPostbackTerminado(page);
+    if (!(await this._clickPorIdSufijo(page, '_BtnCodigoTipologia'))) {
+      await page
+        .evaluate(() => {
+          const b = document.querySelector('[id$="_BtnCodigoTipologia"]');
+          if (b) b.click();
+        })
+        .catch(() => {});
+    }
+    if (!(await this._esperarModal(page, 'PanelCodigoTipologia'))) return false;
+    await this._esperarPostbackTerminado(page);
+
+    const marcado = await page
+      .evaluate((c) => {
+        document
+          .querySelectorAll('[data-robot-codigo]')
+          .forEach((e) => e.removeAttribute('data-robot-codigo'));
+        const panel = document.querySelector('[id$="PanelCodigoTipologia"]');
+        if (!panel) return { ok: false, texto: 'sin panel' };
+        const clicables =
+          'a, input[type="submit"], input[type="button"], input[type="radio"], input[type="checkbox"], button';
+        const fila = Array.from(panel.querySelectorAll('tr')).find((tr) =>
+          (tr.textContent || '').replace(/\s+/g, '').includes(c)
+        );
+        let objetivo = fila ? fila.querySelector(clicables) || fila : null;
+        if (!objetivo) {
+          objetivo =
+            Array.from(panel.querySelectorAll(clicables)).find((b) =>
+              `${b.value || ''} ${b.textContent || ''}`.includes(c)
+            ) || null;
+        }
+        if (!objetivo) return { ok: false, texto: (panel.innerText || '').slice(0, 600) };
+        objetivo.setAttribute('data-robot-codigo', '1');
+        return { ok: true };
+      }, cod)
+      .catch(() => ({ ok: false, texto: 'error al leer la lista' }));
+
+    if (!marcado.ok) {
+      this.logger.warn(`Código ${cod} no está en la lista de tipologías. Contenido: ${marcado.texto}`);
+      await this._guardarDiagnostico(page, `codigo-tipologia-${cod}`);
+      await this._clickPorIdSufijo(page, '_BtnSalirCodigoTipologia');
+      await this._esperarPostbackTerminado(page);
+      return false;
+    }
+
+    await page
+      .locator('[data-robot-codigo="1"]')
+      .first()
+      .click({ timeout: 8000 })
+      .catch(() =>
+        page.evaluate(() => {
+          const e = document.querySelector('[data-robot-codigo="1"]');
+          if (e) e.click();
+        })
+      )
+      .catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    await this._esperarPostbackTerminado(page);
+    await page.waitForTimeout(800);
+
+    const texto = await page
+      .evaluate(() => {
+        const b = document.querySelector('[id$="_BtnCodigoTipologia"]');
+        const l = document.querySelector('[id$="_LblDescripcionTipologia"]');
+        return `${b ? b.value : ''} | ${l ? l.textContent : ''}`;
+      })
+      .catch(() => '');
+    this.logger.info(`Tipología tras elegir código: ${texto.slice(0, 250)}`);
+    if (await this._modalVisible(page, 'PanelCodigoTipologia')) {
+      await this._clickPorIdSufijo(page, '_BtnSalirCodigoTipologia');
+      await this._esperarPostbackTerminado(page);
+    }
+    return texto.includes(cod);
+  }
+
+  /** "Modifica" de Datos de la visita abre PanelPopVisita. */
+  async _escribirVisita(page, v, onProgreso, avisos) {
+    if (!v.resultado && !v.nombre1 && !v.documento) return;
+    onProgreso('Navegando a pestaña Datos de la visita...');
+    await this._irAPestana(page, 'Datos de la visita');
+    if (
+      !(await this._abrirModalConReintento(page, 'PanelPopVisita', '_BtnModificaVisita', 'Modifica'))
+    ) {
+      avisos.push('No se pudo abrir los datos de la visita.');
+      return;
+    }
+    await this._cerrarAviso(page);
+
+    const desplegables = [
+      ['Resultado visita', v.resultado, '_CmbResultadoVisita'],
+      ['Tipo Documento', v.tipoDocumento, '_CmbTipoDocVisita'],
+    ];
+    onProgreso('Llenando datos de la visita...');
+    await this._llenarDesplegables(page, desplegables);
+    const textos = [
+      ['Fecha visita', v.fecha, '_TxtFechaVisita'],
+      ['1er Nombre', v.nombre1, '_TxtNombre1'],
+      ['2do Nombre', v.nombre2, '_TxtNombre2'],
+      ['1er Apellido', v.apellido1, '_TxtApellido1'],
+      ['2do Apellido', v.apellido2, '_TxtApellido2'],
+      ['Documento', v.documento, '_TDctoVisita'],
+    ];
+    const vacios = await this._llenarTextosConVerificacion(page, textos);
+    if (vacios.length > 0) avisos.push(`Visita sin llenar: ${vacios.join(', ')}.`);
+    const mal = await this._verificarDesplegables(page, desplegables);
+    if (mal.length > 0) avisos.push(`Visita: ${mal.join('; ')}.`);
+
+    await this._habilitarParaEnvio(page, [...desplegables, ...textos].map((x) => x[2]));
+    onProgreso('Guardando datos de la visita...');
+    if (!(await this._guardarConRespaldo(page, '_BtnGuardaVisita'))) {
+      avisos.push('No se pudo guardar la visita.');
+    }
+    const aviso = await this._cerrarAviso(page);
+    if (aviso && /error|digite|seleccione|debe/i.test(aviso)) avisos.push(`Visita: ${aviso}`);
+    await this._cerrarModalAbierto(page);
+  }
+
+  /* ----- ayudantes de llenado con verificación ----- */
+
+  /** Desplegables en orden, esperando el postback de cada uno antes del siguiente. */
+  async _llenarDesplegables(page, campos) {
+    for (const [etiqueta, valor, sufijo] of campos) {
+      if (!valor) continue;
+      await this._esperarPostbackTerminado(page);
+      await this._llenarInput(page, etiqueta, valor, { idSufijo: sufijo });
+      await this._esperarPostbackTerminado(page);
+    }
+  }
+
+  /** Devuelve los desplegables cuyo valor elegido no es el pedido. */
+  async _verificarDesplegables(page, campos) {
+    const pedidos = campos.filter(([, valor]) => valor);
+    const elegidos = await page
+      .evaluate((sufijos) => {
+        const salida = {};
+        for (const s of sufijos) {
+          const todos = Array.from(document.querySelectorAll(`[id$="${s}"]`));
+          const el =
+            todos.find((e) => e.offsetParent !== null || e.getClientRects().length > 0) ||
+            todos[0];
+          const op = el && el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
+          salida[s] = op ? op.text : '';
+        }
+        return salida;
+      }, pedidos.map((c) => c[2]))
+      .catch(() => ({}));
+    const norm = (t) =>
+      String(t || '')
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .toUpperCase()
+        .replace(/[_\s.]+/g, ' ')
+        .trim();
+    const mal = [];
+    for (const [etiqueta, valor, sufijo] of pedidos) {
+      const elegido = norm(elegidos[sufijo]);
+      if (!elegido || !elegido.includes(norm(valor))) {
+        mal.push(`${etiqueta} quedó "${elegidos[sufijo] || 'vacío'}" en vez de "${valor}"`);
+      }
+    }
+    if (mal.length > 0) this.logger.warn(`Desplegables distintos a lo pedido: ${mal.join('; ')}`);
+    return mal;
+  }
+
+  /**
+   * Escribe textos y rehace los que un postback dejó vacíos (hasta 3 rondas).
+   * Devuelve las etiquetas que siguieron vacías.
+   */
+  async _llenarTextosConVerificacion(page, campos) {
+    const pedidos = campos.filter(([, valor]) => valor);
+    for (const [etiqueta, valor, sufijo] of pedidos) {
+      await this._llenarInput(page, etiqueta, valor, { idSufijo: sufijo });
+    }
+    let vacios = [];
+    for (let ronda = 1; ronda <= 3; ronda++) {
+      await this._esperarPostbackTerminado(page);
+      const valores = await page
+        .evaluate((sufijos) => {
+          const salida = {};
+          for (const s of sufijos) {
+            const todos = Array.from(document.querySelectorAll(`[id$="${s}"]`));
+            const el =
+              todos.find((e) => e.offsetParent !== null || e.getClientRects().length > 0) ||
+              todos[0];
+            salida[s] = el ? el.value : '';
+          }
+          return salida;
+        }, pedidos.map((c) => c[2]))
+        .catch(() => ({}));
+      vacios = pedidos.filter(([, , sufijo]) => !String(valores[sufijo] || '').trim());
+      if (vacios.length === 0) break;
+      this.logger.warn(`Ronda ${ronda}: rehaciendo ${vacios.map((c) => c[0]).join(', ')}.`);
+      for (const [etiqueta, valor, sufijo] of vacios) {
+        await this._llenarInput(page, etiqueta, valor, { idSufijo: sufijo });
+      }
+    }
+    return vacios.map((c) => c[0]);
+  }
+
+  /** Un campo deshabilitado no viaja al guardar: se habilitan justo antes. */
+  async _habilitarParaEnvio(page, sufijos) {
+    await page
+      .evaluate((lista) => {
+        for (const s of lista) {
+          for (const el of document.querySelectorAll(`[id$="${s}"]`)) {
+            el.removeAttribute('disabled');
+            el.removeAttribute('readonly');
+            el.disabled = false;
+            if ('readOnly' in el) el.readOnly = false;
+          }
+        }
+      }, sufijos)
+      .catch(() => {});
+  }
+
+  async _modalVisible(page, idParcial) {
+    return page
+      .evaluate((id) => {
+        const el = document.querySelector(`[id$="${id}"]`);
+        if (!el) return false;
+        const est = getComputedStyle(el);
+        return est.display !== 'none' && est.visibility !== 'hidden';
+      }, idParcial)
+      .catch(() => false);
+  }
+
   /* ===================== NAVEGACIÓN ===================== */
 
   async _abrirTramite(page, radicado) {
@@ -1710,7 +2052,10 @@ class MigracionTramiteService {
     if (radicado && typeof radicado === 'object') {
       return { anio: String(radicado.anio), numero: String(radicado.numero) };
     }
-    const m = String(radicado || '').match(/^(\d{2,4})-(\d+)/);
+    const texto = String(radicado || '').trim();
+    // En la oficina se habla del radicado sin el año ("9642"): se asume el actual.
+    if (/^\d+$/.test(texto)) return { anio: String(new Date().getFullYear()), numero: texto };
+    const m = texto.match(/^(\d{2,4})-(\d+)/);
     if (!m) throw new Error(`Formato de radicado inválido: "${radicado}". Use AAAA-NNNN.`);
     const crudo = m[1];
     const anio = crudo.length <= 2 ? `20${crudo}` : crudo;

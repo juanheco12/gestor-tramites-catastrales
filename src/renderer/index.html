@@ -374,6 +374,67 @@
   <div id="modal-migrar" class="modal oculto">
     <div class="modal-caja modal-ancha">
       <h2>Migrar datos entre trámites</h2>
+      <div class="ficha-campos">
+        <label>Tipo de migración
+          <select id="migrar-tipo">
+            <option value="quinta">Cancelación → Mutación de Quinta (copiar de un origen)</option>
+            <option value="tercera">Mutación de Tercera (construcción nueva)</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="migrar-seccion-tercera" class="oculto">
+        <p class="modal-texto">
+          Llena el trámite de tercera con estos valores: cambia el destino
+          económico y el tipo de predio, agrega la unidad de construcción, la
+          fuente administrativa y los datos de la visita. Dirección,
+          propietarios y terreno no se tocan. Los valores se recuerdan para el
+          siguiente trámite: revise los que cambian (área, visita).
+        </p>
+        <div class="ficha-campos">
+          <label>Radicado del trámite de tercera
+            <input id="ter-radicado" type="text" placeholder="2026-9642" />
+          </label>
+        </div>
+        <h3 class="ter-titulo">Predio</h3>
+        <div class="ficha-campos">
+          <label>Destino económico <input id="ter-destino-eco" type="text" /></label>
+          <label>Tipo de predio <input id="ter-tipo-predio" type="text" /></label>
+        </div>
+        <h3 class="ter-titulo">Construcción</h3>
+        <div class="ficha-campos">
+          <label>Unidad <input id="ter-unidad" type="text" /></label>
+          <label>Tipo <input id="ter-tipo-cons" type="text" /></label>
+          <label>Uso <input id="ter-uso" type="text" /></label>
+          <label>Núm. pisos <input id="ter-pisos" type="text" /></label>
+          <label>Área (m²) <input id="ter-area" type="text" /></label>
+          <label>Año construcción <input id="ter-anio" type="text" /></label>
+          <label>Estado de conservación <input id="ter-conservacion" type="text" /></label>
+          <label>Tipología: clase <input id="ter-clase" type="text" /></label>
+          <label>Tipología: tipo <input id="ter-tipologia" type="text" /></label>
+          <label>Tipología: código <input id="ter-codigo" type="text" /></label>
+        </div>
+        <h3 class="ter-titulo">Fuente administrativa</h3>
+        <div class="ficha-campos">
+          <label>Tipo fuente <input id="ter-tipo-fuente" type="text" /></label>
+          <label>Número <input id="ter-num-fuente" type="text" /></label>
+          <label>Fecha <input id="ter-fecha-fuente" type="text" placeholder="25/02/2026" /></label>
+          <label>Ente emisor <input id="ter-ente" type="text" /></label>
+          <label>Fecha inscripción catastral <input id="ter-fecha-insc" type="text" placeholder="08/10/2026" /></label>
+          <label>Fecha vigencia fiscal <input id="ter-fecha-vigencia" type="text" placeholder="01/01/2027" /></label>
+        </div>
+        <h3 class="ter-titulo">Datos de la visita</h3>
+        <div class="ficha-campos">
+          <label>Resultado visita <input id="ter-resultado-visita" type="text" /></label>
+          <label>Fecha visita <input id="ter-fecha-visita" type="text" placeholder="13/10/2026" /></label>
+          <label>1er nombre <input id="ter-nombre1" type="text" /></label>
+          <label>1er apellido <input id="ter-apellido1" type="text" /></label>
+          <label>Tipo documento <input id="ter-tipo-doc-visita" type="text" /></label>
+          <label>Documento <input id="ter-doc-visita" type="text" /></label>
+        </div>
+      </div>
+
+      <div id="migrar-seccion-quinta">
       <p class="modal-texto">
         Lee los datos de un trámite origen en edis (predio, propietarios, fuente
         administrativa) y los escribe en otro trámite destino. El navegador se
@@ -460,6 +521,7 @@
           hay que escribirlos en cada trámite.
         </p>
       </details>
+      </div>
 
       <p id="migrar-estado" class="modal-nota"></p>
       <div class="modal-botones">
