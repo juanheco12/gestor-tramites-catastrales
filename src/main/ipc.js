@@ -31,6 +31,8 @@ const CANALES = {
   GENERAR_ACTAS_LOTE: 'bandeja:generar-actas-lote',
   CONSULTAR_NPN: 'bandeja:consultar-npn',
   MIGRAR_TRAMITE: 'bandeja:migrar-tramite',
+  FOTOS_TERCERA_LISTAR: 'bandeja:fotos-tercera-listar',
+  FOTOS_TERCERA_ABRIR: 'bandeja:fotos-tercera-abrir',
 };
 
 /**
@@ -821,6 +823,48 @@ function registrarIpc(contenedor, obtenerVentana) {
 
   /* ------------------------- migración de datos entre trámites ------------------------- */
 
+  /**
+   * Fotos del trámite de tercera: JPG en una carpeta fija junto a la base de
+   * datos. El nombre del archivo (sin extensión) es la referencia en edis,
+   * que admite máximo 10 caracteres.
+   */
+  const carpetaFotosTercera = () =>
+    path.join(path.dirname(contenedor.config.app.dbPath), 'fotos-tercera');
+
+  const listarFotosTercera = () => {
+    const carpeta = carpetaFotosTercera();
+    fs.mkdirSync(carpeta, { recursive: true });
+    const fotos = fs
+      .readdirSync(carpeta)
+      .filter((nombre) => /\.jpe?g$/i.test(nombre))
+      .sort((a, b) => a.localeCompare(b, 'es', { numeric: true }))
+      .map((nombre) => {
+        const titulo = path.parse(nombre).name.trim();
+        return {
+          archivo: nombre,
+          ruta: path.join(carpeta, nombre),
+          titulo,
+          valido: titulo.length > 0 && titulo.length <= 10,
+        };
+      });
+    return { carpeta, fotos };
+  };
+
+  ipcMain.handle(CANALES.FOTOS_TERCERA_LISTAR, () => {
+    try {
+      return { ok: true, ...listarFotosTercera() };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle(CANALES.FOTOS_TERCERA_ABRIR, async () => {
+    const carpeta = carpetaFotosTercera();
+    fs.mkdirSync(carpeta, { recursive: true });
+    const error = await shell.openPath(carpeta);
+    return error ? { ok: false, error } : { ok: true, carpeta };
+  });
+
   ipcMain.handle(CANALES.MIGRAR_TRAMITE, async (_evento, opciones) => {
     const { tipo = 'quinta', origen, destino, extras = {}, tercera = {} } = opciones || {};
     const esTercera = tipo === 'tercera';
@@ -832,6 +876,23 @@ function registrarIpc(contenedor, obtenerVentana) {
             ? 'Se necesita el radicado del trámite de tercera.'
             : 'Se necesita un radicado origen y uno destino.',
         };
+      }
+
+      // Las fotos se leen de la carpeta en el momento de correr y se validan
+      // ANTES de abrir edis: una referencia larga la rechaza edis a mitad.
+      const datosTercera = { ...tercera, fotos: [] };
+      if (esTercera && tercera.subirFotos) {
+        const { fotos } = listarFotosTercera();
+        const largas = fotos.filter((f) => !f.valido).map((f) => f.archivo);
+        if (largas.length > 0) {
+          return {
+            ok: false,
+            error:
+              `Estos nombres de foto pasan de 10 caracteres (edis no los acepta): ` +
+              `${largas.join(', ')}. Acórtelos en la carpeta de fotos.`,
+          };
+        }
+        datosTercera.fotos = fotos.map(({ ruta, titulo }) => ({ ruta, titulo }));
       }
 
       if (syncService.enEjecucion) {
@@ -857,7 +918,7 @@ function registrarIpc(contenedor, obtenerVentana) {
           notificar('migracion', { mensaje, fase: 'progreso' });
 
         if (esTercera) {
-          const r = await migracionService.escribirTercera(page, destino, tercera, progreso);
+          const r = await migracionService.escribirTercera(page, destino, datosTercera, progreso);
           const avisos = (r && r.avisos) || [];
           notificar('migracion', {
             mensaje: `Trámite ${destino} llenado. Revise la pantalla.`,

@@ -1375,6 +1375,7 @@ const TERCERA_VALORES_FIJOS = {
   'ter-fecha-vigencia': '01/01/2027',
   'ter-resultado-visita': 'Exitoso',
   'ter-tipo-doc-visita': 'Cedula_Ciudadania',
+  'ter-modelo-texto': 'Mutación de Tercera',
 };
 const TERCERA_CAMPOS = [
   ...Object.keys(TERCERA_VALORES_FIJOS),
@@ -1405,14 +1406,46 @@ function cargarDatosTercera() {
   if (!valorTer('ter-fecha-visita')) {
     document.getElementById('ter-fecha-visita').value = hoyDdMmAaaa();
   }
+  document.getElementById('ter-subir-fotos').checked = guardado['ter-subir-fotos'] !== false;
   document.getElementById('ter-radicado').value = '';
 }
+
+async function pintarFotosTercera() {
+  const lista = document.getElementById('ter-fotos-lista');
+  const r = await window.bandejaApi.fotosTerceraListar();
+  lista.replaceChildren();
+  if (!r || !r.ok) {
+    lista.textContent = `No se pudo leer la carpeta de fotos${r && r.error ? `: ${r.error}` : ''}.`;
+    return;
+  }
+  if (r.fotos.length === 0) {
+    const li = document.createElement('li');
+    li.textContent = 'La carpeta está vacía: ponga ahí los JPG con el título como nombre.';
+    lista.appendChild(li);
+    return;
+  }
+  for (const foto of r.fotos) {
+    const li = document.createElement('li');
+    li.textContent = foto.valido
+      ? foto.titulo
+      : `${foto.archivo} — nombre de más de 10 letras, acórtelo`;
+    if (!foto.valido) li.className = 'ter-foto-mala';
+    lista.appendChild(li);
+  }
+}
+
+document.getElementById('ter-abrir-fotos').addEventListener('click', async () => {
+  const r = await window.bandejaApi.fotosTerceraAbrir();
+  if (r && !r.ok) migrarEstado.textContent = `No se pudo abrir la carpeta: ${r.error}`;
+});
+document.getElementById('ter-refrescar-fotos').addEventListener('click', pintarFotosTercera);
 
 function guardarDatosTercera() {
   const datos = {};
   for (const id of TERCERA_CAMPOS) {
     if (valorTer(id)) datos[id] = valorTer(id);
   }
+  datos['ter-subir-fotos'] = document.getElementById('ter-subir-fotos').checked;
   try {
     localStorage.setItem(TERCERA_CLAVE, JSON.stringify(datos));
   } catch {
@@ -1452,6 +1485,7 @@ document.getElementById('btn-migrar-menu').addEventListener('click', () => {
   }
   mostrarSeccionMigracion();
   modalMigrar.classList.remove('oculto');
+  pintarFotosTercera().catch(() => {});
 });
 
 async function ejecutarTercera(boton) {
@@ -1491,6 +1525,8 @@ async function ejecutarTercera(boton) {
       tipoDocumento: valorTer('ter-tipo-doc-visita'),
       documento: valorTer('ter-doc-visita'),
     },
+    subirFotos: document.getElementById('ter-subir-fotos').checked,
+    modeloTexto: valorTer('ter-modelo-texto'),
   };
   guardarDatosTercera();
 

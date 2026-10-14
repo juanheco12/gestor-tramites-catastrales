@@ -581,6 +581,8 @@ class MigracionTramiteService {
     await this._escribirConstruccion(page, datos.construccion || {}, onProgreso, avisos);
     await this._escribirFuenteAdministrativa(page, {}, datos.fuente || {}, onProgreso, avisos);
     await this._escribirVisita(page, datos.visita || {}, onProgreso, avisos);
+    await this._subirFotos(page, datos.fotos || [], onProgreso, avisos);
+    await this._cargarModeloTexto(page, datos.modeloTexto, onProgreso, avisos);
 
     await this._guardarDiagnostico(page, `tercera-${radicado}`);
     onProgreso('Trámite de tercera completado. Revise en pantalla.');
@@ -775,6 +777,182 @@ class MigracionTramiteService {
     const aviso = await this._cerrarAviso(page);
     if (aviso && /error|digite|seleccione|debe/i.test(aviso)) avisos.push(`Visita: ${aviso}`);
     await this._cerrarModalAbierto(page);
+  }
+
+  /**
+   * Fotoreconocimiento: "+" abre PanelPopFoto (referencia + archivo). "Subir
+   * Archivo" hace un postback COMPLETO (lleva un archivo, no puede ir por
+   * UpdatePanel): la página se recarga y hay que volver a la pestaña antes
+   * de la foto siguiente.
+   * @param {Array<{ruta: string, titulo: string}>} fotos
+   */
+  async _subirFotos(page, fotos, onProgreso, avisos) {
+    for (let i = 0; i < fotos.length; i++) {
+      const foto = fotos[i];
+      onProgreso(`Subiendo foto ${i + 1} de ${fotos.length}: ${foto.titulo}...`);
+      await this._irAPestana(page, 'Datos de la visita');
+      if (!(await this._abrirModalConReintento(page, 'PanelPopFoto', '_BtnAgregaFoto'))) {
+        avisos.push(`No se pudo abrir "Subir fotografía" (faltaron ${fotos.length - i} foto(s)).`);
+        return;
+      }
+      await this._llenarInput(page, 'Referencia', foto.titulo, { idSufijo: '_TRef' });
+      try {
+        await page.locator('[id$="_FileUpload1"]').first().setInputFiles(foto.ruta, { timeout: 10000 });
+      } catch (error) {
+        avisos.push(`Foto "${foto.titulo}": no se pudo adjuntar el archivo (${error.message}).`);
+        await this._cerrarModalAbierto(page);
+        continue;
+      }
+      const resultado = await this._enviarFoto(page, foto.titulo);
+      if (!resultado) {
+        avisos.push(`Foto "${foto.titulo}": no se confirmó la subida; revísela en edis.`);
+        await this._guardarDiagnostico(page, `foto-${foto.titulo}`);
+      }
+      await this._cerrarAviso(page);
+      await this._cerrarModalAbierto(page);
+    }
+  }
+
+  /**
+   * Pulsa "Subir Archivo" y espera a que la página se recargue o a que la
+   * referencia aparezca en la lista de fotografías.
+   */
+  async _enviarFoto(page, titulo) {
+    await page.evaluate(() => { window.__robotFoto = 1; }).catch(() => {});
+    await page
+      .locator('[id$="BtnSubirFoto"]')
+      .first()
+      .click({ timeout: 8000 })
+      .catch(() =>
+        page.evaluate(() => {
+          const b = document.querySelector('[id$="BtnSubirFoto"]');
+          if (b) b.click();
+        })
+      )
+      .catch(() => {});
+
+    const fin = Date.now() + 90000;
+    while (Date.now() < fin) {
+      await page.waitForTimeout(700);
+      const estado = await page
+        .evaluate((ref) => {
+          if (document.readyState !== 'complete') return 'cargando';
+          const panel = document.querySelector('[id$="_PanelFotografias"]');
+          const texto = panel ? (panel.textContent || '').toUpperCase() : '';
+          if (texto.includes(ref.toUpperCase())) return 'listo';
+          return window.__robotFoto ? 'esperando' : 'recargada';
+        }, titulo)
+        .catch(() => 'cargando');
+      if (estado === 'listo') return true;
+      if (estado === 'recargada') {
+        await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+        await this._esperarPostbackTerminado(page);
+        this.logger.info(`Foto "${titulo}": la página se recargó tras subirla.`);
+        return true;
+      }
+    }
+    this.logger.warn(`Foto "${titulo}": ni recarga ni referencia en la lista tras 90 s.`);
+    return false;
+  }
+
+  /**
+   * Texto Motivo: la nube (BtnCargaTexto) abre PanelPopTexto con los
+   * modelos; se pulsa el pedido, que llena epígrafe, encabezado, etc., y se
+   * guarda.
+   */
+  async _cargarModeloTexto(page, modelo, onProgreso, avisos) {
+    if (!modelo) return;
+    onProgreso('Navegando a pestaña Texto Motivo...');
+    await this._irAPestana(page, 'Texto Motivo');
+    onProgreso(`Cargando el modelo "${modelo}"...`);
+    if (!(await this._abrirModalConReintento(page, 'PanelPopTexto', '_BtnCargaTexto'))) {
+      avisos.push('No se pudo abrir la lista de modelos de texto motivo.');
+      return;
+    }
+    await this._esperarPostbackTerminado(page);
+
+    const marcado = await page
+      .evaluate((pedido) => {
+        const norm = (t) =>
+          String(t || '')
+            .normalize('NFD')
+            .replace(/[̀-ͯ]/g, '')
+            .toUpperCase()
+            .replace(/[_\s]+/g, ' ')
+            .trim();
+        document
+          .querySelectorAll('[data-robot-modelo]')
+          .forEach((e) => e.removeAttribute('data-robot-modelo'));
+        const panel = document.querySelector('[id$="PanelPopTexto"]');
+        if (!panel) return { ok: false, texto: 'sin panel' };
+        const objetivo = norm(pedido);
+        const textoDe = (el) => norm(`${el.value || ''} ${el.textContent || ''}`);
+        const elegir = (selector) =>
+          Array.from(panel.querySelectorAll(selector))
+            .filter((el) => !/^SALIR$/.test(textoDe(el)) && textoDe(el).includes(objetivo))
+            // El más corto es el más parecido: evita "Mutación de Tercera -
+            // Englobe" cuando se pidió "Mutación de Tercera".
+            .sort((a, b) => textoDe(a).length - textoDe(b).length)[0];
+        const el =
+          elegir('a, button, input[type="submit"], input[type="button"], input[type="image"]') ||
+          elegir('tr') ||
+          elegir('li, span, div');
+        if (!el) return { ok: false, texto: (panel.innerText || '').slice(0, 800) };
+        const clic =
+          el.tagName === 'TR'
+            ? el.querySelector('a, button, input[type="submit"], input[type="button"], input[type="image"]') || el
+            : el;
+        clic.setAttribute('data-robot-modelo', '1');
+        return { ok: true, elegido: textoDe(el).slice(0, 120) };
+      }, modelo)
+      .catch(() => ({ ok: false, texto: 'error al leer la lista' }));
+
+    if (!marcado.ok) {
+      this.logger.warn(`Modelo "${modelo}" no encontrado. Lista: ${marcado.texto}`);
+      avisos.push(`Texto motivo: no se encontró el modelo "${modelo}"; elíjalo a mano con la nube.`);
+      await this._guardarDiagnostico(page, 'modelo-texto');
+      await this._clickPorIdSufijo(page, '_BtnSalirTexto');
+      await this._esperarPostbackTerminado(page);
+      return;
+    }
+    this.logger.info(`Modelo de texto elegido: ${marcado.elegido}`);
+
+    await page
+      .locator('[data-robot-modelo="1"]')
+      .first()
+      .click({ timeout: 8000 })
+      .catch(() =>
+        page.evaluate(() => {
+          const e = document.querySelector('[data-robot-modelo="1"]');
+          if (e) e.click();
+        })
+      )
+      .catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
+    await this._esperarPostbackTerminado(page);
+    await page.waitForTimeout(800);
+    if (await this._modalVisible(page, 'PanelPopTexto')) {
+      await this._clickPorIdSufijo(page, '_BtnSalirTexto');
+      await this._esperarPostbackTerminado(page);
+    }
+
+    const epigrafe = await page
+      .evaluate(() => {
+        const el = document.querySelector('[id$="_TEpigrafe"]');
+        return el ? el.value : '';
+      })
+      .catch(() => '');
+    if (!epigrafe.trim()) {
+      avisos.push(`Texto motivo: el modelo "${modelo}" no llenó el epígrafe; revíselo.`);
+      return;
+    }
+
+    onProgreso('Guardando texto motivo...');
+    if (!(await this._guardarConRespaldo(page, '_BtnGuardaTexto'))) {
+      avisos.push('No se pudo guardar el texto motivo.');
+    }
+    const aviso = await this._cerrarAviso(page);
+    if (aviso && /error|digite|debe/i.test(aviso)) avisos.push(`Texto motivo: ${aviso}`);
   }
 
   /* ----- ayudantes de llenado con verificación ----- */

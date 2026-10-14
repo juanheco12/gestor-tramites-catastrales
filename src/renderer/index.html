@@ -432,6 +432,20 @@
           <label>Tipo documento <input id="ter-tipo-doc-visita" type="text" /></label>
           <label>Documento <input id="ter-doc-visita" type="text" /></label>
         </div>
+        <h3 class="ter-titulo">Fotoreconocimiento</h3>
+        <label class="ter-check">
+          <input id="ter-subir-fotos" type="checkbox" checked />
+          Subir las fotos de la carpeta (el nombre del archivo es la referencia, máx. 10 letras)
+        </label>
+        <div class="ter-fotos-acciones">
+          <button id="ter-abrir-fotos" type="button" class="btn-secundario">Abrir carpeta de fotos</button>
+          <button id="ter-refrescar-fotos" type="button" class="btn-secundario">Actualizar lista</button>
+        </div>
+        <ul id="ter-fotos-lista" class="ter-fotos-lista"></ul>
+        <h3 class="ter-titulo">Texto motivo</h3>
+        <div class="ficha-campos">
+          <label>Modelo a cargar con la nube <input id="ter-modelo-texto" type="text" /></label>
+        </div>
       </div>
 
       <div id="migrar-seccion-quinta">

@@ -871,6 +871,11 @@ input.inp-sector { min-width: 40px; width: 52px; text-align: center; }
 }
 .migrar-extras[open] summary { margin-bottom: 8px; }
 .ter-titulo { margin: 12px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; opacity: .75; }
+.modal-caja .ter-check { display: flex; flex-direction: row; gap: 8px; align-items: center; justify-content: flex-start; text-align: left; font-size: 13px; font-weight: normal; margin: 4px 0; }
+.modal-caja .ter-check input { width: auto; margin: 0; flex: none; }
+.ter-fotos-acciones { display: flex; gap: 8px; margin: 6px 0; }
+.ter-fotos-lista { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
+.ter-fotos-lista .ter-foto-mala { color: var(--color-error, #c0392b); }
 
 .modal-caja {
   background: var(--color-panel);
