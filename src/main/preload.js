@@ -32,6 +32,7 @@ const CANALES = {
   MIGRAR_TRAMITE: 'bandeja:migrar-tramite',
   FOTOS_TERCERA_LISTAR: 'bandeja:fotos-tercera-listar',
   FOTOS_TERCERA_ABRIR: 'bandeja:fotos-tercera-abrir',
+  EXTRAER_PREDIOS: 'bandeja:extraer-predios',
 };
 
 contextBridge.exposeInMainWorld('bandejaApi', {
@@ -61,6 +62,7 @@ contextBridge.exposeInMainWorld('bandejaApi', {
   migrarTramite: (opciones) => ipcRenderer.invoke(CANALES.MIGRAR_TRAMITE, opciones),
   fotosTerceraListar: () => ipcRenderer.invoke(CANALES.FOTOS_TERCERA_LISTAR),
   fotosTerceraAbrir: () => ipcRenderer.invoke(CANALES.FOTOS_TERCERA_ABRIR),
+  extraerPredios: (opciones) => ipcRenderer.invoke(CANALES.EXTRAER_PREDIOS, opciones),
   appVersion: () => ipcRenderer.invoke(CANALES.APP_VERSION),
   appBuscarActualizacion: () => ipcRenderer.invoke(CANALES.APP_BUSCAR_ACTUALIZACION),
   onProgreso: (callback) => {

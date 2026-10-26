@@ -216,6 +216,40 @@ class ExportService {
   }
 
   /**
+   * NPN creados en trámites de segunda: una fila por predio. Un radicado sin
+   * predios leídos va igual, con el motivo, para no tener que cotejar.
+   * @param {Array<{radicado, clase, npnMatriz, predios: string[], motivo?}>} resultados
+   */
+  async exportarPrediosSegregacion(resultados) {
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Gestor de Trámites Catastrales';
+    const hoja = workbook.addWorksheet('Predios');
+    this._encabezado(hoja, ['RADICADO', 'CLASE', 'NPN MATRIZ', 'N°', 'NPN CREADO', 'OBSERVACION']);
+    for (const r of resultados) {
+      const filas = r.predios.length > 0 ? r.predios : [''];
+      filas.forEach((npn, i) => {
+        const fila = hoja.addRow([
+          r.radicado,
+          r.clase || '',
+          r.npnMatriz || '',
+          npn ? i + 1 : '',
+          npn,
+          npn ? '' : r.motivo || 'no se encontraron predios',
+        ]);
+        fila.font = { name: 'Arial' };
+      });
+    }
+    this._ajustarAnchos(hoja);
+    const sello = new Date().toISOString().slice(0, 10);
+    const ruta = await this._escribirLibro(
+      workbook,
+      path.join(path.dirname(path.resolve(this.config.app.exportXlsxPath)), `Predios segregacion ${sello}.xlsx`)
+    );
+    this.logger.info(`Excel de predios de segregación exportado: ${ruta}`);
+    return ruta;
+  }
+
+  /**
    * Escribe el libro, buscando otro nombre si el archivo está abierto.
    *
    * Windows bloquea el archivo mientras Excel lo tiene abierto, y consultar

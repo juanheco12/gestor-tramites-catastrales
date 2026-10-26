@@ -33,6 +33,7 @@ const CANALES = {
   MIGRAR_TRAMITE: 'bandeja:migrar-tramite',
   FOTOS_TERCERA_LISTAR: 'bandeja:fotos-tercera-listar',
   FOTOS_TERCERA_ABRIR: 'bandeja:fotos-tercera-abrir',
+  EXTRAER_PREDIOS: 'bandeja:extraer-predios',
 };
 
 /**
@@ -817,6 +818,74 @@ function registrarIpc(contenedor, obtenerVentana) {
       };
     } catch (error) {
       logger.error(`IPC consultar NPN: ${error.message}`);
+      return { ok: false, error: error.message };
+    }
+  });
+
+  /* ------------------------- predios creados en segunda ------------------------- */
+
+  ipcMain.handle(CANALES.EXTRAER_PREDIOS, async (_evento, opciones) => {
+    const { radicados = [] } = opciones || {};
+    try {
+      const lista = [...new Set(radicados.map(normalizarRadicado).filter(Boolean))];
+      if (lista.length === 0) {
+        return { ok: false, error: 'No se recibió ningún radicado válido.' };
+      }
+      if (syncService.enEjecucion) {
+        return {
+          ok: false,
+          error: 'Hay una sincronización en curso. Espere a que termine e intente de nuevo.',
+        };
+      }
+      syncService.enEjecucion = true;
+
+      const resultados = [];
+      try {
+        notificar('predios', { mensaje: `Abriendo edis para ${lista.length} trámite(s)...` });
+        const page = await syncService.browserManager.abrirBandejaAutenticada({ interactivo: true });
+        for (let i = 0; i < lista.length; i++) {
+          const radicado = lista[i];
+          notificar('predios', { mensaje: `Leyendo ${i + 1} de ${lista.length} (${radicado})...` });
+          const enBase = tramiteRepository.buscarPorNumero(radicado);
+          try {
+            const d = await contenedor.migracionService.leerPrediosSegregacion(page, radicado, {
+              guardarHtml: i === 0,
+            });
+            resultados.push({
+              radicado,
+              clase: d.clase || (enBase && enBase.tipo) || '',
+              npnMatriz: d.npnMatriz,
+              predios: d.predios,
+              motivo: d.predios.length > 0 ? '' : d.como,
+            });
+          } catch (error) {
+            const motivo = error.message.split('\n')[0];
+            logger.warn(`Predios ${radicado}: ${motivo}`);
+            resultados.push({
+              radicado,
+              clase: (enBase && enBase.tipo) || '',
+              npnMatriz: '',
+              predios: [],
+              motivo,
+            });
+          }
+        }
+      } finally {
+        syncService.enEjecucion = false;
+        await syncService.browserManager.cerrar().catch(() => {});
+      }
+
+      const ruta = await exportService.exportarPrediosSegregacion(resultados);
+      shell.openPath(ruta);
+      return {
+        ok: true,
+        ruta,
+        total: resultados.length,
+        predios: resultados.reduce((s, r) => s + r.predios.length, 0),
+        sinPredios: resultados.filter((r) => r.predios.length === 0).map((r) => r.radicado),
+      };
+    } catch (error) {
+      logger.error(`IPC extraer predios: ${error.message}`);
       return { ok: false, error: error.message };
     }
   });

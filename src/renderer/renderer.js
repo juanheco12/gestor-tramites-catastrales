@@ -793,6 +793,47 @@ document.getElementById('npn-consultar').addEventListener('click', async () => {
   }
 });
 
+/* ------------------------- predios creados en segunda ------------------------- */
+
+const modalPredios = document.getElementById('modal-predios');
+const prediosEstado = document.getElementById('predios-estado');
+
+document.getElementById('btn-predios-menu').addEventListener('click', () => {
+  prediosEstado.textContent = '';
+  modalPredios.classList.remove('oculto');
+  document.getElementById('predios-radicados').focus();
+});
+
+document.getElementById('predios-cancelar').addEventListener('click', () => {
+  modalPredios.classList.add('oculto');
+});
+
+document.getElementById('predios-extraer').addEventListener('click', async () => {
+  const boton = document.getElementById('predios-extraer');
+  const radicados = radicadosDe(document.getElementById('predios-radicados').value);
+  if (radicados.length === 0) {
+    prediosEstado.textContent = 'Escriba al menos un radicado.';
+    return;
+  }
+  boton.disabled = true;
+  prediosEstado.textContent = 'Abriendo edis...';
+  try {
+    const r = await window.bandejaApi.extraerPredios({ radicados });
+    if (!r.ok) {
+      prediosEstado.textContent = `No se pudo extraer: ${r.error}`;
+      return;
+    }
+    const partes = [`${r.predios} predio(s) de ${r.total} trámite(s).`];
+    if (r.sinPredios.length > 0) {
+      partes.push(`Sin predios (van en el Excel con el motivo): ${r.sinPredios.join(', ')}.`);
+    }
+    prediosEstado.textContent = partes.join(' ');
+    mostrarEstado(r.sinPredios.length > 0 ? 'progreso' : 'exito', `${partes.join(' ')} Archivo: ${r.ruta}`);
+  } finally {
+    boton.disabled = false;
+  }
+});
+
 /* ------------------------- actas de visita en bloque ------------------------- */
 
 const modalActas = document.getElementById('modal-actas');
@@ -1829,6 +1870,9 @@ document.getElementById('btn-cerrar-sesion').addEventListener('click', () => {
 window.bandejaApi.onProgreso((datos) => {
   if (datos.evento === 'migracion') {
     if (migrarEstado) migrarEstado.textContent = datos.mensaje;
+    mostrarEstado('progreso', datos.mensaje);
+  } else if (datos.evento === 'predios') {
+    if (prediosEstado) prediosEstado.textContent = datos.mensaje;
     mostrarEstado('progreso', datos.mensaje);
   } else if (datos.evento === 'npn-lote') {
     if (npnEstado) npnEstado.textContent = datos.mensaje;

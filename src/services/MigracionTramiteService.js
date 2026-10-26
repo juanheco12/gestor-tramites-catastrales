@@ -81,6 +81,65 @@ function UBICAR_BUSQUEDA() {
  * coincidencia por inclusión con un rótulo corto (para "Fte Administrativa"
  * dentro de "Fte Administrativa y Decretos").
  */
+/**
+ * Corre DENTRO de la página: NPN del recuadro de predios de la segregación.
+ * Sube desde el título ("PREDIOS DE LA ...") o desde "Inserta Predio" hasta
+ * el contenedor que tiene NPN, sin tocar la grilla de la bandeja (GridRad) ni
+ * el NPN del propio trámite.
+ */
+function LEER_PREDIOS_SEGREGACION() {
+  const PATRON = /\b\d{2}-\d{2}-\d{2}-\d{2}-\d{4}-\d{4}-\d-\d{2}-\d{2}-\d{4}\b/g;
+  const norm = (t) =>
+    String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
+  const matrizEl = document.querySelector('[id$="_LblNpnRadicado"]');
+  const npnMatriz = matrizEl ? (matrizEl.textContent || '').trim() : '';
+  const claseEl = document.querySelector('[id$="_LblClaseRad"], [id$="_LblClase"]');
+  const clase = claseEl ? (claseEl.textContent || '').trim() : '';
+
+  const npnsDe = (raiz) => {
+    const vistos = [];
+    const caminante = document.createTreeWalker(raiz, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = caminante.nextNode())) {
+      if (n.parentElement && n.parentElement.closest('[id$="_GridRad"], [id$="_LblNpnRadicado"]')) continue;
+      for (const m of (n.textContent || '').match(PATRON) || []) {
+        if (m !== npnMatriz && !vistos.includes(m)) vistos.push(m);
+      }
+    }
+    return vistos;
+  };
+
+  const anclas = [];
+  for (const el of document.querySelectorAll('div, span, td, th, h1, h2, h3, h4, p, b, font, label')) {
+    const propio = norm(Array.from(el.childNodes).filter((x) => x.nodeType === 3).map((x) => x.textContent).join(' '));
+    if (/^PREDIOS DE(L| LA| LOS)? /.test(propio)) anclas.push({ el, como: `título "${propio.slice(0, 40)}"` });
+  }
+  for (const el of document.querySelectorAll('input[type="submit"], input[type="button"], button, a')) {
+    if (/INSERTA PREDIO/.test(norm(el.value || el.textContent))) anclas.push({ el, como: 'botón Inserta Predio' });
+  }
+
+  for (const { el, como } of anclas) {
+    let cont = el;
+    for (let nivel = 0; nivel < 7 && cont && cont !== document.body; nivel++) {
+      if (cont.querySelector('[id$="_GridRad"]')) break;
+      const predios = npnsDe(cont);
+      if (predios.length > 0) return { npnMatriz, clase, predios, ubicado: true, como };
+      cont = cont.parentElement;
+    }
+  }
+
+  // Respaldo: una grilla con columnas NPN y Elimina que no sea la bandeja.
+  for (const tabla of document.querySelectorAll('table')) {
+    if (tabla.matches('[id$="_GridRad"]') || tabla.closest('[id$="_GridRad"]')) continue;
+    const cab = Array.from(tabla.querySelectorAll('th, tr:first-child td')).map((c) => norm(c.textContent));
+    if (cab.includes('NPN') && cab.some((c) => c.startsWith('ELIMINA'))) {
+      const predios = npnsDe(tabla);
+      if (predios.length > 0) return { npnMatriz, clase, predios, ubicado: true, como: 'grilla NPN/Elimina' };
+    }
+  }
+  return { npnMatriz, clase, predios: [], ubicado: anclas.length > 0, como: anclas.length > 0 ? 'recuadro sin NPN' : 'no se encontró el recuadro' };
+}
+
 function MARCAR_PESTANA({ nombre }) {
   const norm = (t) =>
     (t || '')
@@ -542,6 +601,36 @@ class MigracionTramiteService {
     await this._guardarDiagnostico(page, `destino-${radicado}`);
     onProgreso('Migración completada. Revise en pantalla.');
     return { avisos };
+  }
+
+  /* ===================== PREDIOS DE LA SEGREGACIÓN ===================== */
+
+  /**
+   * Lee los NPN creados en un trámite de segunda (recuadro "PREDIOS DE LA
+   * SEGREGACIÓN", a la izquierda).  El recuadro se ubica por su título o por
+   * el botón "Inserta Predio", no por id: el id real aún no se ha visto.
+   * @returns {Promise<{npnMatriz: string, clase: string, predios: string[], ubicado: boolean}>}
+   */
+  async leerPrediosSegregacion(page, radicado, { guardarHtml = false } = {}) {
+    this._atenderDialogos(page);
+    await this._abrirTramite(page, radicado);
+    await this._esperarPostbackTerminado(page);
+
+    let datos = null;
+    const fin = Date.now() + 10000;
+    while (Date.now() < fin) {
+      datos = await page.evaluate(LEER_PREDIOS_SEGREGACION).catch(() => null);
+      if (datos && datos.predios.length > 0) break;
+      await page.waitForTimeout(500);
+    }
+    datos = datos || { npnMatriz: '', clase: '', predios: [], ubicado: false, como: 'error al leer' };
+    this.logger.info(
+      `Predios de ${radicado}: ${datos.predios.length} (matriz ${datos.npnMatriz}, ubicado por: ${datos.como})`
+    );
+    if (guardarHtml || datos.predios.length === 0) {
+      await this._guardarDiagnostico(page, `predios-${radicado}`);
+    }
+    return datos;
   }
 
   /* ===================== TRÁMITE DE TERCERA ===================== */
