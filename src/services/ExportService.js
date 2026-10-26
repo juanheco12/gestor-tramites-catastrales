@@ -224,7 +224,7 @@ class ExportService {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'Gestor de Trámites Catastrales';
     const hoja = workbook.addWorksheet('Predios');
-    this._encabezado(hoja, ['RADICADO', 'CLASE', 'NPN MATRIZ', 'N°', 'NPN CREADO', 'OBSERVACION']);
+    this._encabezado(hoja, ['RADICADO', 'CLASE', 'NPN MATRIZ', 'N°', 'NPN', 'OBSERVACION']);
     for (const r of resultados) {
       const filas = r.predios.length > 0 ? r.predios : [''];
       filas.forEach((npn, i) => {
@@ -234,7 +234,11 @@ class ExportService {
           r.npnMatriz || '',
           npn ? i + 1 : '',
           npn,
-          npn ? '' : r.motivo || 'no se encontraron predios',
+          !npn
+            ? r.motivo || 'no se encontraron predios'
+            : npn === r.npnMatriz
+              ? 'es el NPN matriz'
+              : '',
         ]);
         fila.font = { name: 'Arial' };
       });

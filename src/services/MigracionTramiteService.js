@@ -96,15 +96,27 @@ function LEER_PREDIOS_SEGREGACION() {
   const claseEl = document.querySelector('[id$="_LblClaseRad"], [id$="_LblClase"]');
   const clase = claseEl ? (claseEl.textContent || '').trim() : '';
 
+  // edis pinta muchos "enlaces" como <input type="submit" value="...">: el
+  // número está en el value, no en el texto. Se leen texto, value y title, y
+  // se unifican los guiones raros. El matriz SÍ se incluye: si edis lo lista
+  // en el recuadro, va en el Excel (marcado), en el mismo orden de pantalla.
   const npnsDe = (raiz) => {
     const vistos = [];
-    const caminante = document.createTreeWalker(raiz, NodeFilter.SHOW_TEXT);
-    let n;
-    while ((n = caminante.nextNode())) {
-      if (n.parentElement && n.parentElement.closest('[id$="_GridRad"], [id$="_LblNpnRadicado"]')) continue;
-      for (const m of (n.textContent || '').match(PATRON) || []) {
-        if (m !== npnMatriz && !vistos.includes(m)) vistos.push(m);
+    const anotar = (texto) => {
+      const limpio = String(texto || '').replace(/[‐-―−]/g, '-');
+      for (const m of limpio.match(PATRON) || []) if (!vistos.includes(m)) vistos.push(m);
+    };
+    const fuera = (el) => el && el.closest('[id$="_GridRad"], [id$="_LblNpnRadicado"]');
+    const caminante = document.createTreeWalker(raiz, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+    let n = caminante.currentNode;
+    while (n) {
+      if (n.nodeType === 3) {
+        if (!fuera(n.parentElement)) anotar(n.textContent);
+      } else if (!fuera(n) && n.tagName !== 'SCRIPT' && n.tagName !== 'STYLE') {
+        if (n.tagName === 'INPUT' && n.type !== 'hidden') anotar(n.value);
+        anotar(n.getAttribute && n.getAttribute('title'));
       }
+      n = caminante.nextNode();
     }
     return vistos;
   };
@@ -137,7 +149,19 @@ function LEER_PREDIOS_SEGREGACION() {
       if (predios.length > 0) return { npnMatriz, clase, predios, ubicado: true, como: 'grilla NPN/Elimina' };
     }
   }
-  return { npnMatriz, clase, predios: [], ubicado: anclas.length > 0, como: anclas.length > 0 ? 'recuadro sin NPN' : 'no se encontró el recuadro' };
+  // Para corregir sin adivinar: un pedazo del recuadro tal como vino.
+  const base = anclas[0] ? anclas[0].el.parentElement || anclas[0].el : null;
+  const muestra = base
+    ? (base.parentElement || base).outerHTML.replace(/\s+/g, ' ').slice(0, 2500)
+    : '';
+  return {
+    npnMatriz,
+    clase,
+    predios: [],
+    ubicado: anclas.length > 0,
+    como: anclas.length > 0 ? 'recuadro sin NPN' : 'no se encontró el recuadro',
+    muestra,
+  };
 }
 
 function MARCAR_PESTANA({ nombre }) {
@@ -627,6 +651,9 @@ class MigracionTramiteService {
     this.logger.info(
       `Predios de ${radicado}: ${datos.predios.length} (matriz ${datos.npnMatriz}, ubicado por: ${datos.como})`
     );
+    if (datos.predios.length === 0 && datos.muestra) {
+      this.logger.warn(`Recuadro de predios de ${radicado} sin NPN leídos. HTML: ${datos.muestra}`);
+    }
     if (guardarHtml || datos.predios.length === 0) {
       await this._guardarDiagnostico(page, `predios-${radicado}`);
     }
