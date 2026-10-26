@@ -73,12 +73,6 @@
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
         }
       ]
     },
@@ -91,9 +85,6 @@
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "artifactName": "GestorTramites-Setup-${version}.exe"
-    },
-    "portable": {
-      "artifactName": "GestorTramites-Portable-${version}.exe"
     }
   }
 }
