@@ -798,8 +798,79 @@ document.getElementById('npn-consultar').addEventListener('click', async () => {
 const modalPredios = document.getElementById('modal-predios');
 const prediosEstado = document.getElementById('predios-estado');
 
+const prediosResultados = document.getElementById('predios-resultados');
+
+function pintarResultadosZonas(tramites) {
+  prediosResultados.replaceChildren();
+  const fila = (clase, ...partes) => {
+    const li = document.createElement('li');
+    if (clase) li.className = clase;
+    for (const [texto, cls] of partes) {
+      const span = document.createElement('span');
+      span.textContent = texto;
+      if (cls) span.className = cls;
+      li.appendChild(span);
+    }
+    prediosResultados.appendChild(li);
+  };
+  for (const t of tramites) {
+    fila('pr-tramite', [`Trámite ${t.radicado}`]);
+    if (t.error) fila('', ['✗', 'pr-error'], [t.error, 'pr-error']);
+    // Los errores primero: son los que hay que revisar a mano.
+    const orden = [...t.resultados].sort((a, b) => Number(a.ok) - Number(b.ok));
+    for (const r of orden) {
+      fila(
+        '',
+        [r.ok ? '✓' : '✗', r.ok ? 'pr-ok' : 'pr-error'],
+        [r.npn, 'pr-npn'],
+        [r.ok ? `zonas aplicadas (${r.mensaje})` : `tiene error: ${r.mensaje}`, r.ok ? '' : 'pr-error']
+      );
+    }
+  }
+}
+
+document.getElementById('predios-zonas').addEventListener('click', async () => {
+  const boton = document.getElementById('predios-zonas');
+  const radicados = radicadosDe(document.getElementById('predios-radicados').value);
+  if (radicados.length === 0) {
+    prediosEstado.textContent = 'Escriba al menos un radicado.';
+    return;
+  }
+  boton.disabled = true;
+  prediosResultados.replaceChildren();
+  prediosEstado.textContent = 'Abriendo edis...';
+  try {
+    const r = await window.bandejaApi.zonasPredios({
+      radicados,
+      incluirMatriz: document.getElementById('predios-incluir-matriz').checked,
+    });
+    if (!r.ok) {
+      prediosEstado.textContent = `No se pudo aplicar zonas: ${r.error}`;
+      return;
+    }
+    pintarResultadosZonas(r.tramites);
+    const malos = r.tramites.flatMap((t) => t.resultados.filter((x) => !x.ok).map((x) => `${x.npn}: ${x.mensaje}`));
+    const tramitesMalos = r.tramites.filter((t) => t.error).map((t) => `${t.radicado}: ${t.error}`);
+    const resumen =
+      `Zonas aplicadas en ${r.aplicados} predio(s)` +
+      (r.conError > 0 ? `, ${r.conError} con error.` : '.') +
+      (tramitesMalos.length > 0 ? ` Trámites sin procesar: ${tramitesMalos.join(' | ')}.` : '');
+    const hayErrores = malos.length > 0 || tramitesMalos.length > 0;
+    prediosEstado.textContent = resumen;
+    prediosEstado.style.color = hayErrores ? 'var(--color-error)' : '';
+    mostrarEstado(
+      hayErrores ? 'error' : 'exito',
+      malos.length > 0 ? `${resumen} Revise: ${malos.join(' | ')}` : resumen
+    );
+  } finally {
+    boton.disabled = false;
+  }
+});
+
 document.getElementById('btn-predios-menu').addEventListener('click', () => {
   prediosEstado.textContent = '';
+  prediosEstado.style.color = '';
+  prediosResultados.replaceChildren();
   modalPredios.classList.remove('oculto');
   document.getElementById('predios-radicados').focus();
 });

@@ -164,6 +164,62 @@ function LEER_PREDIOS_SEGREGACION() {
   };
 }
 
+/**
+ * Número tal como lo muestra edis: "585048.90", "585,048.9" o "66603,13".
+ * Con punto y coma a la vez, el último es el decimal; una coma sola seguida
+ * de exactamente 3 cifras es de miles.
+ */
+function numeroEdis(texto) {
+  let t = String(texto || '').replace(/[^\d.,-]/g, '');
+  if (!t) return NaN;
+  const coma = t.lastIndexOf(',');
+  const punto = t.lastIndexOf('.');
+  if (coma >= 0 && punto >= 0) {
+    t = coma > punto ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+  } else if (coma >= 0) {
+    t = /^-?\d{1,3}(,\d{3})+$/.test(t) ? t.replace(/,/g, '') : t.replace(',', '.');
+  }
+  return parseFloat(t);
+}
+
+/**
+ * Corre DENTRO de la página. Marca para clic el elemento cuyo texto o valor es
+ * EXACTAMENTE el NPN pedido (nunca el "Elimina" de al lado), y dice cuál NPN
+ * está resaltado en verde (el seleccionado en edis).
+ */
+function MARCAR_PREDIO({ npn, marcar }) {
+  const limpio = (t) => String(t || '').replace(/[‐-―−]/g, '-').trim();
+  const fuera = (el) => el.closest('[id$="_GridRad"], [id$="_LblNpnRadicado"]');
+  const candidatos = Array.from(
+    document.querySelectorAll('a, input[type="submit"], input[type="button"], button, span, td')
+  ).filter((el) => !fuera(el));
+  const textoDe = (el) => limpio(el.tagName === 'INPUT' ? el.value : el.textContent);
+
+  const verde = (el) => {
+    for (let n = el, i = 0; n && i < 3; n = n.parentElement, i++) {
+      const m = getComputedStyle(n).backgroundColor.match(/\d+/g);
+      if (!m) continue;
+      const [r, g, b, a] = m.map(Number);
+      if (a === 0) continue;
+      if (g >= 90 && g > r + 40 && g > b + 40) return true;
+    }
+    return false;
+  };
+  const conNpn = candidatos.filter((el) => /^\d{2}-\d{2}-\d{2}-\d{2}-\d{4}-\d{4}-\d-\d{2}-\d{2}-\d{4}$/.test(textoDe(el)));
+  const seleccionadoEl = conNpn.find(verde);
+  const seleccionado = seleccionadoEl ? textoDe(seleccionadoEl) : '';
+
+  if (!marcar) return { seleccionado };
+  document.querySelectorAll('[data-robot-predio]').forEach((e) => e.removeAttribute('data-robot-predio'));
+  const exactos = conNpn.filter((el) => textoDe(el) === npn);
+  // Lo clicable primero (enlace o botón); una celda solo si no hay otra cosa.
+  const objetivo =
+    exactos.find((el) => ['A', 'INPUT', 'BUTTON'].includes(el.tagName)) || exactos.find((el) => el.tagName === 'SPAN') || exactos[0];
+  if (!objetivo) return { seleccionado, encontrado: false };
+  objetivo.setAttribute('data-robot-predio', '1');
+  return { seleccionado, encontrado: true, tag: objetivo.tagName };
+}
+
 function MARCAR_PESTANA({ nombre }) {
   const norm = (t) =>
     (t || '')
@@ -255,9 +311,9 @@ class MigracionTramiteService {
     if (page.__robotDialogos) return;
     page.__robotDialogos = true;
     page.on('dialog', async (dialogo) => {
-      this.logger.info(
-        `Diálogo de edis aceptado: "${String(dialogo.message()).slice(0, 150)}"`
-      );
+      const texto = String(dialogo.message());
+      page.__robotUltimoDialogo = { texto, cuando: Date.now() };
+      this.logger.info(`Diálogo de edis aceptado: "${texto.slice(0, 150)}"`);
       await dialogo.accept().catch(() => {});
     });
   }
@@ -658,6 +714,147 @@ class MigracionTramiteService {
       await this._guardarDiagnostico(page, `predios-${radicado}`);
     }
     return datos;
+  }
+
+  /**
+   * Aplica zonas digitales a cada predio del recuadro de la segregación, uno
+   * por uno. Un predio con problema no detiene a los demás: su error se anota
+   * y se sigue.
+   * @returns {Promise<{npnMatriz: string, resultados: Array<{npn, ok, area, suma, mensaje}>}>}
+   */
+  async aplicarZonasSegregacion(page, radicado, { incluirMatriz = false } = {}, onProgreso = () => {}) {
+    onProgreso(`Abriendo ${radicado} y leyendo sus predios...`);
+    const datos = await this.leerPrediosSegregacion(page, radicado);
+    const lista = datos.predios.filter((n) => incluirMatriz || n !== datos.npnMatriz);
+    const resultados = [];
+    if (lista.length === 0) {
+      return { npnMatriz: datos.npnMatriz, resultados, sinPredios: datos.como };
+    }
+
+    for (let i = 0; i < lista.length; i++) {
+      const npn = lista[i];
+      onProgreso(`${radicado}: predio ${i + 1} de ${lista.length} (${npn})...`);
+      let r;
+      try {
+        r = await this._zonasDeUnPredio(page, npn);
+      } catch (error) {
+        r = { ok: false, area: '', suma: '', mensaje: error.message.split('\n')[0] };
+      }
+      this.logger.info(`Zonas ${radicado} ${npn}: ${r.ok ? 'OK' : 'ERROR'} ${r.mensaje}`);
+      resultados.push({ npn, ...r });
+      if (!r.ok) {
+        await this._cerrarAviso(page).catch(() => '');
+        await this._cerrarModalAbierto(page).catch(() => '');
+      }
+    }
+    return { npnMatriz: datos.npnMatriz, resultados };
+  }
+
+  async _zonasDeUnPredio(page, npn) {
+    // 1. Seleccionar el predio en el recuadro (queda resaltado en verde).
+    let seleccionado = '';
+    let hayResaltado = false;
+    for (let intento = 1; intento <= 2; intento++) {
+      await this._esperarPostbackTerminado(page);
+      const m = await page.evaluate(MARCAR_PREDIO, { npn, marcar: true }).catch(() => ({ encontrado: false }));
+      if (!m.encontrado) return { ok: false, area: '', suma: '', mensaje: 'no aparece en la lista de predios' };
+      await page
+        .locator('[data-robot-predio="1"]')
+        .first()
+        .click({ timeout: 8000 })
+        .catch(() =>
+          page.evaluate(() => {
+            const e = document.querySelector('[data-robot-predio="1"]');
+            if (e) e.click();
+          })
+        )
+        .catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
+      await this._esperarPostbackTerminado(page);
+      await page.waitForTimeout(600);
+      const despues = await page.evaluate(MARCAR_PREDIO, { npn, marcar: false }).catch(() => ({ seleccionado: '' }));
+      seleccionado = despues.seleccionado;
+      hayResaltado = hayResaltado || Boolean(seleccionado);
+      if (seleccionado === npn) break;
+    }
+    // Si edis resalta otro predio, aplicar zonas caería sobre el equivocado.
+    if (hayResaltado && seleccionado !== npn) {
+      return { ok: false, area: '', suma: '', mensaje: `no se pudo seleccionar (quedó marcado ${seleccionado || 'ninguno'})` };
+    }
+    await this._cerrarAviso(page);
+
+    // 2. Terreno: sin área no hay nada que repartir en zonas.
+    await this._irAPestana(page, 'Terreno');
+    const antes = await this._leerEstadoTerreno(page);
+    const area = numeroEdis(antes.area);
+    if (!(area > 0)) {
+      return { ok: false, area: antes.area, suma: '', mensaje: `sin área de terreno privada ("${antes.area || 'vacía'}")` };
+    }
+
+    // 3. Aplicar y esperar la respuesta de ESTE clic (la tabla puede traer
+    // las zonas del predio anterior o de una aplicación vieja).
+    const r = await this._pulsarZonasYEsperar(page);
+    const despues = await this._leerEstadoTerreno(page);
+    const suma = numeroEdis(despues.total);
+    const base = { area: antes.area, suma: despues.total };
+
+    if (r.aviso && /error|no hubo|no se|debe|inv[aá]lid|fall/i.test(r.aviso)) {
+      return { ok: false, ...base, mensaje: r.aviso };
+    }
+    if (r.errorServidor) return { ok: false, ...base, mensaje: `edis respondió con error: ${r.errorServidor}` };
+    if (!r.respondio) return { ok: false, ...base, mensaje: 'edis no respondió al aplicar zonas (90 s)' };
+    if (despues.filasZonas === 0) {
+      return { ok: false, ...base, mensaje: r.aviso || 'no quedaron zonas aplicadas' };
+    }
+    if (suma > 0 && Math.abs(suma - area) > 0.05) {
+      return {
+        ok: false,
+        ...base,
+        mensaje: `la suma de las zonas (${despues.total}) no coincide con el área (${antes.area})`,
+      };
+    }
+    return { ok: true, ...base, mensaje: `${despues.filasZonas} zona(s)${r.aviso ? ` — ${r.aviso}` : ''}` };
+  }
+
+  /** Pulsa "Aplica Zonas Digitales" y espera el fin de SU postback y el cartel. */
+  async _pulsarZonasYEsperar(page) {
+    await this._esperarPostbackTerminado(page);
+    const boton = page.locator('[id$="_BtnGetZonasD"]').first();
+    if (!(await boton.isVisible({ timeout: 8000 }).catch(() => false))) {
+      return { respondio: false, aviso: 'no se encontró el botón "Aplica Zonas Digitales"' };
+    }
+    await page
+      .evaluate(() => {
+        window.__robotZonasPredio = { fin: 0, error: '' };
+        const S = window.Sys;
+        if (!S || !S.WebForms || !S.WebForms.PageRequestManager) return;
+        S.WebForms.PageRequestManager.getInstance().add_endRequest(function fin(s, e) {
+          const err = e.get_error && e.get_error();
+          window.__robotZonasPredio = { fin: Date.now(), error: err ? String(err.message || err) : '' };
+          if (err && e.set_errorHandled) e.set_errorHandled(true);
+          S.WebForms.PageRequestManager.getInstance().remove_endRequest(fin);
+        });
+      })
+      .catch(() => {});
+    const desde = Date.now();
+    await boton.click({ timeout: 15000 }).catch(() => {});
+
+    let aviso = '';
+    let estado = { fin: 0, error: '' };
+    const limite = Date.now() + 90000;
+    while (Date.now() < limite) {
+      await page.waitForTimeout(800);
+      aviso = aviso || (await this._cerrarAviso(page));
+      estado = await page.evaluate(() => window.__robotZonasPredio || { fin: 0, error: '' }).catch(() => estado);
+      const d = page.__robotUltimoDialogo;
+      if (estado.fin || aviso || (d && d.cuando >= desde)) break;
+    }
+    // El cartel puede llegar justo después del fin de la petición.
+    await page.waitForTimeout(800);
+    aviso = aviso || (await this._cerrarAviso(page));
+    const dialogo = page.__robotUltimoDialogo;
+    if (!aviso && dialogo && dialogo.cuando >= desde) aviso = dialogo.texto.trim();
+    return { respondio: Boolean(estado.fin || aviso), errorServidor: estado.error, aviso };
   }
 
   /* ===================== TRÁMITE DE TERCERA ===================== */
@@ -1521,7 +1718,7 @@ class MigracionTramiteService {
   async _cerrarAviso(page) {
     try {
       const boton = page
-        .locator("button:has-text('Aceptar'), input[value='Aceptar'], a:has-text('Aceptar')")
+        .locator("button:has-text('Aceptar'):visible, input[value='Aceptar']:visible, a:has-text('Aceptar'):visible")
         .first();
       if (!(await boton.isVisible({ timeout: 1500 }).catch(() => false))) return '';
 
@@ -2528,4 +2725,4 @@ class MigracionTramiteService {
   }
 }
 
-module.exports = { MigracionTramiteService };
+module.exports = { MigracionTramiteService, numeroEdis };

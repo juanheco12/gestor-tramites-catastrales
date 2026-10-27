@@ -34,6 +34,7 @@ const CANALES = {
   FOTOS_TERCERA_LISTAR: 'bandeja:fotos-tercera-listar',
   FOTOS_TERCERA_ABRIR: 'bandeja:fotos-tercera-abrir',
   EXTRAER_PREDIOS: 'bandeja:extraer-predios',
+  ZONAS_PREDIOS: 'bandeja:zonas-predios',
 };
 
 /**
@@ -886,6 +887,67 @@ function registrarIpc(contenedor, obtenerVentana) {
       };
     } catch (error) {
       logger.error(`IPC extraer predios: ${error.message}`);
+      return { ok: false, error: error.message };
+    }
+  });
+
+  /**
+   * Aplica zonas digitales a cada predio creado en uno o varios trámites de
+   * segunda. Nada se corta por un error: cada predio queda con su resultado.
+   */
+  ipcMain.handle(CANALES.ZONAS_PREDIOS, async (_evento, opciones) => {
+    const { radicados = [], incluirMatriz = false } = opciones || {};
+    try {
+      const lista = [...new Set(radicados.map(normalizarRadicado).filter(Boolean))];
+      if (lista.length === 0) {
+        return { ok: false, error: 'No se recibió ningún radicado válido.' };
+      }
+      if (syncService.enEjecucion) {
+        return {
+          ok: false,
+          error: 'Hay una sincronización en curso. Espere a que termine e intente de nuevo.',
+        };
+      }
+      syncService.enEjecucion = true;
+
+      const tramites = [];
+      try {
+        notificar('predios', { mensaje: `Abriendo edis para ${lista.length} trámite(s)...` });
+        const page = await syncService.browserManager.abrirBandejaAutenticada({ interactivo: true });
+        const progreso = (mensaje) => notificar('predios', { mensaje });
+        for (const radicado of lista) {
+          try {
+            const r = await contenedor.migracionService.aplicarZonasSegregacion(
+              page,
+              radicado,
+              { incluirMatriz },
+              progreso
+            );
+            tramites.push({
+              radicado,
+              resultados: r.resultados,
+              error: r.resultados.length === 0 ? `no se encontraron predios (${r.sinPredios || 'lista vacía'})` : '',
+            });
+          } catch (error) {
+            const motivo = error.message.split('\n')[0];
+            logger.warn(`Zonas ${radicado}: ${motivo}`);
+            tramites.push({ radicado, resultados: [], error: motivo });
+          }
+        }
+      } finally {
+        syncService.enEjecucion = false;
+        await syncService.browserManager.cerrar().catch(() => {});
+      }
+
+      const todos = tramites.flatMap((t) => t.resultados);
+      return {
+        ok: true,
+        tramites,
+        aplicados: todos.filter((r) => r.ok).length,
+        conError: todos.filter((r) => !r.ok).length,
+      };
+    } catch (error) {
+      logger.error(`IPC zonas de predios: ${error.message}`);
       return { ok: false, error: error.message };
     }
   });
