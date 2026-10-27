@@ -722,7 +722,13 @@ class MigracionTramiteService {
    * y se sigue.
    * @returns {Promise<{npnMatriz: string, resultados: Array<{npn, ok, area, suma, mensaje}>}>}
    */
-  async aplicarZonasSegregacion(page, radicado, { incluirMatriz = false } = {}, onProgreso = () => {}) {
+  async aplicarZonasSegregacion(
+    page,
+    radicado,
+    { incluirMatriz = false, areas = {} } = {},
+    onProgreso = () => {}
+  ) {
+    const hayRelacion = Object.keys(areas).length > 0;
     onProgreso(`Abriendo ${radicado} y leyendo sus predios...`);
     const datos = await this.leerPrediosSegregacion(page, radicado);
     const lista = datos.predios.filter((n) => incluirMatriz || n !== datos.npnMatriz);
@@ -736,7 +742,11 @@ class MigracionTramiteService {
       onProgreso(`${radicado}: predio ${i + 1} de ${lista.length} (${npn})...`);
       let r;
       try {
-        r = await this._zonasDeUnPredio(page, npn);
+        if (hayRelacion && !areas[npn]) {
+          r = { ok: false, area: '', suma: '', mensaje: 'no está en la relación de áreas (no se tocó)' };
+        } else {
+          r = await this._zonasDeUnPredio(page, npn, areas[npn] || '');
+        }
       } catch (error) {
         r = { ok: false, area: '', suma: '', mensaje: error.message.split('\n')[0] };
       }
@@ -750,7 +760,7 @@ class MigracionTramiteService {
     return { npnMatriz: datos.npnMatriz, resultados };
   }
 
-  async _zonasDeUnPredio(page, npn) {
+  async _zonasDeUnPredio(page, npn, areaNueva = '') {
     // 1. Seleccionar el predio en el recuadro (queda resaltado en verde).
     let seleccionado = '';
     let hayResaltado = false;
@@ -785,6 +795,26 @@ class MigracionTramiteService {
 
     // 2. Terreno: sin área no hay nada que repartir en zonas.
     await this._irAPestana(page, 'Terreno');
+    if (areaNueva) {
+      // El área de la relación del usuario se escribe en "Área Terreno
+      // Privado" y se confirma (Tab) antes de aplicar zonas, igual que en
+      // la migración de quinta.
+      await this._llenarInput(page, 'Area Terreno Privado', areaNueva, { idSufijo: '_TAreaTTPrivada' });
+      await page.locator('[id$="_TAreaTTPrivada"]').first().press('Tab', { timeout: 5000 }).catch(() => {});
+      await this._esperarPostbackTerminado(page);
+      await page.waitForTimeout(500);
+      const escrita = await this._leerEstadoTerreno(page);
+      if (Math.abs(numeroEdis(escrita.area) - numeroEdis(areaNueva)) > 0.001) {
+        return {
+          ok: false,
+          area: escrita.area,
+          suma: '',
+          mensaje: `no se pudo escribir el área ${areaNueva} (quedó "${escrita.area || 'vacía'}")`,
+        };
+      }
+      // Si edis la deja deshabilitada, su valor no viajaría al aplicar zonas.
+      await this._habilitarParaEnvio(page, ['_TAreaTTPrivada']);
+    }
     const antes = await this._leerEstadoTerreno(page);
     const area = numeroEdis(antes.area);
     if (!(area > 0)) {

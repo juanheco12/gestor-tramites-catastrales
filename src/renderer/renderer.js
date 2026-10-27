@@ -799,6 +799,62 @@ const modalPredios = document.getElementById('modal-predios');
 const prediosEstado = document.getElementById('predios-estado');
 
 const prediosResultados = document.getElementById('predios-resultados');
+const prediosAreas = document.getElementById('predios-areas');
+
+/**
+ * Relación NPN → área pegada por el usuario (dos columnas de Excel, o
+ * separadas por espacio, coma o punto y coma). El área se normaliza a punto
+ * decimal: "585.048,90" y "585048,9" quedan "585048.90".
+ */
+function leerRelacionAreas(texto) {
+  const areas = {};
+  const malas = [];
+  const repetidas = [];
+  for (const linea of texto.split(/\r?\n/)) {
+    const limpia = linea.replace(/[‐-―−]/g, '-').trim();
+    if (!limpia) continue;
+    const m = limpia.match(/(\d{2}-\d{2}-\d{2}-\d{2}-\d{4}-\d{4}-\d-\d{2}-\d{2}-\d{4})[\s;,:|]+([\d.,]+)\s*(m2|m²)?$/i);
+    if (!m) {
+      malas.push(limpia.slice(0, 40));
+      continue;
+    }
+    let t = m[2];
+    if (/^\d{1,3}[.,]\d{3}$/.test(t)) {
+      malas.push(`${m[2]} es ambiguo (¿miles o decimales?)`);
+      continue;
+    }
+    const coma = t.lastIndexOf(',');
+    const punto = t.lastIndexOf('.');
+    if (coma >= 0 && punto >= 0) {
+      t = coma > punto ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+    } else if (coma >= 0) {
+      t = /^\d{1,3}(,\d{3})+$/.test(t) ? t.replace(/,/g, '') : t.replace(',', '.');
+    } else if (/^\d{1,3}(\.\d{3}){2,}$/.test(t)) {
+      t = t.replace(/\./g, '');
+    }
+    const n = parseFloat(t);
+    if (!(n > 0)) {
+      malas.push(limpia.slice(0, 40));
+      continue;
+    }
+    if (areas[m[1]]) repetidas.push(m[1]);
+    areas[m[1]] = n.toFixed(2);
+  }
+  return { areas, malas, repetidas };
+}
+
+function refrescarConteoAreas() {
+  const { areas, malas, repetidas } = leerRelacionAreas(prediosAreas.value);
+  const n = Object.keys(areas).length;
+  const partes = [];
+  if (n > 0) partes.push(`${n} área(s) leídas.`);
+  if (repetidas.length > 0) partes.push(`Repetidos (vale el último): ${repetidas.join(', ')}.`);
+  if (malas.length > 0) partes.push(`No se entendieron: ${malas.join(' | ')}.`);
+  const el = document.getElementById('predios-areas-conteo');
+  el.textContent = partes.join(' ');
+  el.style.color = malas.length > 0 ? 'var(--color-error)' : '';
+}
+prediosAreas.addEventListener('input', refrescarConteoAreas);
 
 function pintarResultadosZonas(tramites) {
   prediosResultados.replaceChildren();
@@ -836,13 +892,21 @@ document.getElementById('predios-zonas').addEventListener('click', async () => {
     prediosEstado.textContent = 'Escriba al menos un radicado.';
     return;
   }
+  const relacion = leerRelacionAreas(prediosAreas.value);
+  if (relacion.malas.length > 0) {
+    prediosEstado.textContent = `Corrija la relación de áreas antes de seguir: ${relacion.malas.join(' | ')}.`;
+    prediosEstado.style.color = 'var(--color-error)';
+    return;
+  }
   boton.disabled = true;
   prediosResultados.replaceChildren();
+  prediosEstado.style.color = '';
   prediosEstado.textContent = 'Abriendo edis...';
   try {
     const r = await window.bandejaApi.zonasPredios({
       radicados,
       incluirMatriz: document.getElementById('predios-incluir-matriz').checked,
+      areas: relacion.areas,
     });
     if (!r.ok) {
       prediosEstado.textContent = `No se pudo aplicar zonas: ${r.error}`;
@@ -854,8 +918,12 @@ document.getElementById('predios-zonas').addEventListener('click', async () => {
     const resumen =
       `Zonas aplicadas en ${r.aplicados} predio(s)` +
       (r.conError > 0 ? `, ${r.conError} con error.` : '.') +
-      (tramitesMalos.length > 0 ? ` Trámites sin procesar: ${tramitesMalos.join(' | ')}.` : '');
-    const hayErrores = malos.length > 0 || tramitesMalos.length > 0;
+      (tramitesMalos.length > 0 ? ` Trámites sin procesar: ${tramitesMalos.join(' | ')}.` : '') +
+      (r.areasSinUsar && r.areasSinUsar.length > 0
+        ? ` NPN de la relación que no están en esos trámites: ${r.areasSinUsar.join(', ')}.`
+        : '');
+    const hayErrores =
+      malos.length > 0 || tramitesMalos.length > 0 || (r.areasSinUsar || []).length > 0;
     prediosEstado.textContent = resumen;
     prediosEstado.style.color = hayErrores ? 'var(--color-error)' : '';
     mostrarEstado(
@@ -871,6 +939,7 @@ document.getElementById('btn-predios-menu').addEventListener('click', () => {
   prediosEstado.textContent = '';
   prediosEstado.style.color = '';
   prediosResultados.replaceChildren();
+  refrescarConteoAreas();
   modalPredios.classList.remove('oculto');
   document.getElementById('predios-radicados').focus();
 });

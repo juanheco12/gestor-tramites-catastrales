@@ -896,7 +896,7 @@ function registrarIpc(contenedor, obtenerVentana) {
    * segunda. Nada se corta por un error: cada predio queda con su resultado.
    */
   ipcMain.handle(CANALES.ZONAS_PREDIOS, async (_evento, opciones) => {
-    const { radicados = [], incluirMatriz = false } = opciones || {};
+    const { radicados = [], incluirMatriz = false, areas = {} } = opciones || {};
     try {
       const lista = [...new Set(radicados.map(normalizarRadicado).filter(Boolean))];
       if (lista.length === 0) {
@@ -920,7 +920,7 @@ function registrarIpc(contenedor, obtenerVentana) {
             const r = await contenedor.migracionService.aplicarZonasSegregacion(
               page,
               radicado,
-              { incluirMatriz },
+              { incluirMatriz, areas },
               progreso
             );
             tramites.push({
@@ -940,9 +940,11 @@ function registrarIpc(contenedor, obtenerVentana) {
       }
 
       const todos = tramites.flatMap((t) => t.resultados);
+      const vistos = new Set(todos.map((r) => r.npn));
       return {
         ok: true,
         tramites,
+        areasSinUsar: Object.keys(areas).filter((npn) => !vistos.has(npn)),
         aplicados: todos.filter((r) => r.ok).length,
         conError: todos.filter((r) => !r.ok).length,
       };
